@@ -41,6 +41,10 @@ pub enum DecodeError {
 
     /// The chunk size indicates the value is not properly aligned for `u32`s.
     InvalidAlignmentU32,
+
+    MissingChunk {
+        expected: Identifier,
+    },
 }
 
 impl error::Error for DecodeError {
@@ -51,7 +55,8 @@ impl error::Error for DecodeError {
             | Self::UnexpectedIdentifier { .. }
             | Self::SizeMismatch { .. }
             | Self::InvalidHeaderSize { .. }
-            | Self::InvalidAlignmentU32 => None,
+            | Self::InvalidAlignmentU32
+            | Self::MissingChunk { .. } => None,
         }
     }
 }
@@ -64,6 +69,8 @@ impl fmt::Display for DecodeError {
                 write!(f, "not enough data (needed {needed} additional bytes)")
             }
             Self::UnexpectedIdentifier { expected, actual } => {
+                let expected = String::from_utf8_lossy(&expected).to_string();
+                let actual = String::from_utf8_lossy(&actual).to_string();
                 write!(f, "expected chunk identifier {expected:?}, got {actual:?}")
             }
             Self::SizeMismatch { expected, actual } => {
@@ -74,6 +81,9 @@ impl fmt::Display for DecodeError {
             }
             Self::InvalidAlignmentU32 => {
                 "expected chunk size to be properly aligned for u32".fmt(f)
+            }
+            Self::MissingChunk { expected } => {
+                write!(f, "chunk not found: {expected:?}")
             }
         }
     }

@@ -41,6 +41,24 @@ impl Parser<'_> {
         Ok(result.to_vec())
     }
 
+    /// Return the next `size` bytes without advancing.
+    ///
+    /// # Errors
+    ///
+    /// This function returns an error if:
+    ///
+    /// - There are not enough bytes to fill a buffer of size `size`.
+    pub fn peek_bytes(&mut self, size: usize) -> Result<Vec<u8>, DecodeError> {
+        let (result, _) =
+            self.data
+                .split_at_checked(size)
+                .ok_or_else(|| DecodeError::NotEnoughBytes {
+                    needed: size.saturating_sub(self.data.len()),
+                })?;
+
+        Ok(result.to_vec())
+    }
+
     pub fn read<T>(&mut self) -> Result<T, DecodeError>
     where
         T: Copy,
@@ -97,6 +115,24 @@ impl Parser<'_> {
         let value = u32::from_le_bytes(result.try_into().unwrap());
 
         self.data = data;
+        Ok(value)
+    }
+
+    pub fn peek_size(&mut self) -> Result<u32, DecodeError> {
+        let size = mem::size_of::<u32>();
+        let (result, _) =
+            self.data
+                .split_at_checked(size)
+                .ok_or_else(|| DecodeError::NotEnoughBytes {
+                    needed: size.saturating_sub(self.data.len()),
+                })?;
+
+        // The ANI file format is based on the RIFF file format, which utilizes little-endian
+        // byte order for multi-byte integers.
+        //
+        // <https://en.wikipedia.org/wiki/Resource_Interchange_File_Format#History>
+        let value = u32::from_le_bytes(result.try_into().unwrap());
+
         Ok(value)
     }
 }

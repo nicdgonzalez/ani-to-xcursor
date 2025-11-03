@@ -12,8 +12,11 @@ use crate::config::Config;
 use crate::context::Context;
 use crate::package::Package;
 
-#[derive(Debug, Clone, clap::Args)]
-pub struct Install;
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct Install {
+    #[clap(long)]
+    strict: bool,
+}
 
 impl Run for Install {
     fn run(&self, ctx: &mut Context) -> anyhow::Result<()> {
@@ -32,7 +35,7 @@ impl Run for Install {
         let theme_input = package.build().theme().as_path().to_owned();
         let theme_name = config.theme().to_owned();
 
-        Build::new().run(ctx)?;
+        Build::new(self.strict).run(ctx)?;
 
         install_theme(&theme_input, &theme_name)?;
         print_install_instructions(&theme_name)?;

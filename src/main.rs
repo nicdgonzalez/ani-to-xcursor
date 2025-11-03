@@ -23,6 +23,7 @@ use clap::Parser as _;
 use colored::Colorize as _;
 use tracing_subscriber::EnvFilter;
 
+use crate::context::Context;
 use crate::verbosity::{Verbosity, VerbosityLevel};
 
 #[derive(Debug, clap::Parser)]
@@ -56,9 +57,12 @@ fn try_main() -> anyhow::Result<ExitCode> {
     setup_panic_hook();
 
     let args = Parser::parse();
-    setup_tracing(args.verbosity.level());
+    let level = args.verbosity.level();
+    setup_tracing(level);
 
-    args.subcommand.run().map(|()| ExitCode::SUCCESS)
+    let mut ctx = Context::default();
+    ctx = ctx.with_level(level);
+    args.subcommand.run(&mut ctx).map(|()| ExitCode::SUCCESS)
 }
 
 fn setup_panic_hook() {
@@ -95,11 +99,13 @@ fn setup_tracing(level: VerbosityLevel) {
     use tracing_subscriber::prelude::*;
 
     let level_filter = level.level_filter();
-    let filter = EnvFilter::default().add_directive(
-        format!("{}={level_filter}", env!("CARGO_CRATE_NAME"))
-            .parse()
-            .unwrap(),
-    );
+    let filter = EnvFilter::default()
+        .add_directive(format!("ani={level_filter}").parse().unwrap())
+        .add_directive(
+            format!("{}={level_filter}", env!("CARGO_CRATE_NAME"))
+                .parse()
+                .unwrap(),
+        );
 
     let registry = tracing_subscriber::registry().with(filter);
 

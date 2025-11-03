@@ -1,0 +1,112 @@
+# Template Cursor.toml file
+# Repository: https://github.com/nicdgonzalez/ani-to-xcursor
+# Last Updated: 2025-11-03
+
+theme = "Theme-Name"
+version = "0.1.0"
+
+[[cursor]]
+name = "default"
+input = "./cursors/Arrow.ani"
+aliases = [
+    "arrow",
+    "dnd-move",
+    "left_ptr",
+    "move",
+    "top_left_arrow",
+    "X_cursor",
+]
+
+[[cursor]]
+name = "help"
+input = "./cursors/Help.ani"
+aliases = ["question_arrow"]
+
+[[cursor]]
+name = "progress"
+input = "./cursors/AppStarting.ani"
+aliases = []
+
+[[cursor]]
+name = "wait"
+input = "./cursors/Wait.ani"
+aliases = ["watch"]
+
+[[cursor]]
+name = "crosshair"
+input = "./cursors/Crosshair.ani"
+aliases = ["cross", "cross_reverse", "diamond_cross", "tcross"]
+
+[[cursor]]
+name = "text"
+input = "./cursors/IBeam.ani"
+aliases = ["xterm"]
+
+[[cursor]]
+name = "hand"
+input = "./cursors/NWPen.ani"
+aliases = []
+
+[[cursor]]
+name = "unavailable"
+input = "./cursors/No.ani"
+aliases = ["not-allowed", "no-drop"]
+
+[[cursor]]
+name = "ns-resize"
+input = "./cursors/SizeNS.ani"
+aliases = [
+    "bottom_side",
+    "sb_v_double_arrow",
+    "top_side",
+    "n-resize",
+    "s-resize",
+]
+
+[[cursor]]
+name = "ew-resize"
+input = "./cursors/SizeWE.ani"
+aliases = [
+    "left_side",
+    "right_side",
+    "sb_h_double_arrow",
+    "w-resize",
+    "e-resize",
+]
+
+[[cursor]]
+name = "nwse-resize"
+input = "./cursors/SizeNWSE.ani"
+aliases = [
+    "bd_double_arrow",
+    "bottom_right_corner",
+    "top_left_corner",
+    "se-resize",
+    "nw-resize",
+]
+
+[[cursor]]
+name = "nesw-resize"
+input = "./cursors/SizeNESW.ani"
+aliases = [
+    "bottom_left_corner",
+    "fd_double_arrow",
+    "top_right_corner",
+    "sw-resize",
+    "ne-resize",
+]
+
+[[cursor]]
+name = "move"
+input = "./cursors/SizeAll.ani"
+aliases = []
+
+[[cursor]]
+name = "alternate"
+input = "./cursors/UpArrow.ani"
+aliases = ["alias"]
+
+[[cursor]]
+name = "link"
+input = "./cursors/Hand.ani"
+aliases = []

@@ -42,7 +42,7 @@ impl Verbosity {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum VerbosityLevel {
     /// Silence all logging output.
     Silent,

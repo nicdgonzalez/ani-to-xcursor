@@ -1,25 +1,30 @@
 use std::fmt::Write as _;
-use std::io::{self, ErrorKind};
+use std::io::{self, ErrorKind, Write as _};
 use std::path::Path;
 use std::process::Command;
 use std::{env, fs, iter, path, thread};
 
 use ani::de::{Ani, JIFFY};
-use anyhow::{Context as _, anyhow};
+use anyhow::{anyhow, Context as _};
+use colored::Colorize as _;
 use image::ImageFormat;
-use tracing::{error, error_span, info, warn};
+use tracing::{error, error_span, info};
 
 use crate::commands::Run;
 use crate::config::{Config, Cursor};
 use crate::context::Context;
 use crate::package::{Build as BuildDir, Package};
+use crate::verbosity::VerbosityLevel;
 
-#[derive(Debug, Clone, clap::Args)]
-pub struct Build;
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct Build {
+    #[clap(long)]
+    strict: bool,
+}
 
 impl Build {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(strict: bool) -> Self {
+        Self { strict }
     }
 }
 
@@ -53,9 +58,11 @@ impl Run for Build {
 
                 let build = package.build().clone();
                 let name = cursor.name().to_owned();
+                let strict = self.strict;
 
-                let handle =
-                    thread::spawn(move || span.in_scope(move || process_cursor(&cursor, &build)));
+                let handle = thread::spawn(move || {
+                    span.in_scope(move || process_cursor(&cursor, &build, strict))
+                });
 
                 (name, handle)
             })
@@ -66,7 +73,17 @@ impl Run for Build {
             match handle.join() {
                 Ok(result) => {
                     if let Err(err) = result {
-                        error!("failed to convert cursor: {name}: {err}");
+                        let mut error_message = err.to_string();
+
+                        if ctx.level >= VerbosityLevel::Verbose {
+                            error_message.push('\n');
+
+                            for cause in err.chain() {
+                                _ = writeln!(error_message, "  Cause: {cause}");
+                            }
+                        }
+
+                        error!("failed to process cursor: {name}: {error_message}");
                         error_count += 1;
                     }
                 }
@@ -81,6 +98,9 @@ impl Run for Build {
         if error_count > 0 {
             Err(anyhow!("failed to create ({error_count}) cursors"))
         } else {
+            let mut stderr = io::stderr();
+            writeln!(stderr, "{}", "Successfully built theme!".bold().green())?;
+
             Ok(())
         }
     }
@@ -114,10 +134,9 @@ fn setup_build_directory(build: &BuildDir, theme_name: &str) -> anyhow::Result<(
     Ok(())
 }
 
-fn process_cursor(cursor: &Cursor, build: &BuildDir) -> anyhow::Result<()> {
-    // Decode ANI file
+fn process_cursor(cursor: &Cursor, build: &BuildDir, strict: bool) -> anyhow::Result<()> {
     let path = path::absolute(cursor.input()).context("failed to resolve cursor input path")?;
-    let ani = Ani::open(&path).context("failed to decode ANI file")?;
+    let ani = Ani::open(&path, strict).context("failed to decode ANI file")?;
 
     let file_stem = path
         .file_stem()
@@ -150,13 +169,12 @@ fn process_cursor(cursor: &Cursor, build: &BuildDir) -> anyhow::Result<()> {
 
 fn extract_frames(ani: &Ani, output_dir: &Path) -> anyhow::Result<Vec<String>> {
     let names = (0..ani.frames().len())
-        .map(|i| format!("{i:0>2}"))
+        .map(|i| format!("{i:0>2}.png"))
         .collect::<Vec<_>>();
 
-    // Convert each frame into a PNG.
     for (i, frame) in ani.frames().iter().enumerate() {
         let path = output_dir.join(&names[i]);
-        let reader = io::Cursor::new(frame.to_bytes());
+        let reader = io::Cursor::new(frame);
         let image = image::load(reader, ImageFormat::Ico).context("failed to load frame image")?;
         image.save_with_format(&path, ImageFormat::Png)?;
     }
@@ -164,15 +182,11 @@ fn extract_frames(ani: &Ani, output_dir: &Path) -> anyhow::Result<Vec<String>> {
     Ok(names)
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "JIFFY is small, there should be no issues"
-)]
+#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn build_xcursor_config(ani: &Ani, frame_names: &[String], output: &Path) -> anyhow::Result<()> {
     let sequence = ani.sequence().map_or_else(
         || {
-            warn!("ANI sequence missing, using default");
+            info!("ANI sequence missing, using default");
             (0..ani.header().steps())
                 .map(|i| i % ani.header().frames())
                 .collect()
@@ -181,7 +195,7 @@ fn build_xcursor_config(ani: &Ani, frame_names: &[String], output: &Path) -> any
     );
     let rates = ani.rates().map_or_else(
         || {
-            warn!("ANI frame rates missing, using default");
+            info!("ANI frame rates missing, using default");
             iter::repeat_n(ani.header().jif_rate(), ani.frames().len()).collect()
         },
         ToOwned::to_owned,
@@ -192,16 +206,22 @@ fn build_xcursor_config(ani: &Ani, frame_names: &[String], output: &Path) -> any
     for i in sequence {
         let i = usize::try_from(i).context("invalid sequence index")?;
         let frame = &ani.frames()[i];
-        let image = frame.images().first().context("missing image in frame")?;
+
+        // First byte of the ICONDIRENTRY structure.
+        // TODO: Move this data to the `ani` crate.
+        let width = frame[6];
+
         let file_name = &frame_names[i];
         let duration = rates[i] * (JIFFY.round() as u32);
 
         writeln!(
             contents,
-            "{} {} {} {file_name} {duration}",
-            image.header().width(),
-            image.header().hotspot_x(),
-            image.header().hotspot_y()
+            "{size} {x} {y} {file_name} {duration}",
+            size = width,
+            x = u16::from_le_bytes(frame[10..=11].try_into().unwrap()),
+            y = u16::from_le_bytes(frame[12..=13].try_into().unwrap()),
+            file_name = file_name,
+            duration = duration,
         )?;
     }
 
@@ -215,10 +235,12 @@ fn create_xcursor(frames_dir: &Path, config: &Path, output: &Path) -> anyhow::Re
         .current_dir(frames_dir)
         .status()
         .context("failed to execute xcursorgen")?;
-    info!("created Xcursor: {:#}", output.display());
 
     match status.code() {
-        Some(0) => Ok(()),
+        Some(0) => {
+            info!("created Xcursor: {:#}", output.display());
+            Ok(())
+        }
         Some(code) => Err(anyhow!("process failed with exit code: {code}")),
         None => Err(anyhow!("process terminated due to signal")),
     }
