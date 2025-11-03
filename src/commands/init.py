@@ -5,10 +5,10 @@ Helper script for generating a `Cursor.toml` file from an `Install.inf`.
 
 # Usage
 
-First, install my inf parser:
+First, install my inf parser + tomli_w:
 
 ```bash
-python3 -m pip install git+https://github.com/nicdgonzalez/inf.git
+python3 -m pip install tomli_w git+https://github.com/nicdgonzalez/inf.git
 ```
 
 Then, execute this script on the target directory:
@@ -16,6 +16,9 @@ Then, execute this script on the target directory:
 ```bash
 python3 ./main.py --input /path/to/Install.inf
 ```
+
+The generated TOML configuration will be output to stdout, which you can
+capture or redirect into a file. Enjoy!
 
 """
 
