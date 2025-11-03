@@ -8,11 +8,19 @@ A command-line tool for converting Windows animated cursors to Linux.
 
 - cargo 1.87.0
 - xcursorgen 1.0.8
+- python 3.13.7
 
 Install from Git using cargo:
 
 ```bash
 cargo install --git https://github.com/nicdgonzalez/ani-to-xcursor
+```
+
+The INF file parser is implemented in Python, so for now, you will also need to
+install the following Python packages:
+
+```bash
+python3 -m pip install tomli_w git+https://github.com/nicdgonzalez/inf.git
 ```
 
 ## Quickstart
