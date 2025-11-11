@@ -28,18 +28,18 @@ python3 -m pip install tomli_w git+https://github.com/nicdgonzalez/inf.git
 From the directory containing the `Install.inf` file, run:
 
 ```bash
-ani-to-xcursor init && ani-to-xcursor install
+ani-to-xcursor install
 ```
 
-If you're *really* in a hurry, you can do:
+If you're *really* in a hurry, you can install and set with a single command:
 
 ```bash
-ani-to-xcursor init > /dev/null && ani-to-xcursor install 2> /dev/null | xargs -I{} bash -c "{}"
+eval "$(ani-to-xcursor install 2> /dev/null)"
 ```
 
 The `install` command will try to figure out which command you need to set up
-the cursor on your system and output it as the last line of stdout; if you pipe
-it into `bash`, it should set the cursor automatically.
+the cursor on your system and outputs it as the last line of stdout; if you
+pipe it into `bash`, it should set the cursor automatically.
 
 I did my best to include as many systems as I could, but I personally use
 GNOME/gsettings, so that one is the only one that I am able to test. The

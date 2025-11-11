@@ -353,6 +353,7 @@ def logging_subscriber(
         root.addHandler(hdlr=handler)
 
     root.setLevel(level=level)
+    logging.getLogger("inf").setLevel(level=level)
 
 
 if __name__ == "__main__":

@@ -4,12 +4,19 @@ use std::{env, fs, io};
 
 use anyhow::{bail, Context as _};
 use colored::Colorize as _;
+use tracing::error;
 
 use crate::commands::Run;
 use crate::context::Context;
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct Init;
+
+impl Init {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
 
 impl Run for Init {
     fn run(&self, _ctx: &mut Context) -> anyhow::Result<()> {
@@ -21,6 +28,7 @@ impl Run for Init {
             .args([
                 "-c",
                 include_str!("./init.py"),
+                "-vvv",
                 "--input",
                 install_inf
                     .to_str()
@@ -34,6 +42,11 @@ impl Run for Init {
         let output = child
             .wait_with_output()
             .context("failed to get output from child process")?;
+
+        if !output.stderr.is_empty() {
+            let err = String::from_utf8_lossy(&output.stderr).to_string();
+            error!("child process returned an error:\n{err}");
+        }
 
         if output.stdout.is_empty() {
             bail!("failed to get output from child process");

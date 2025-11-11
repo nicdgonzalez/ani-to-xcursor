@@ -6,8 +6,9 @@ use std::{env, io};
 use anyhow::Context as _;
 use colored::Colorize;
 
+use crate::commands::build::{symlink, Build};
+use crate::commands::init::Init;
 use crate::commands::Run;
-use crate::commands::build::{Build, symlink};
 use crate::config::Config;
 use crate::context::Context;
 use crate::package::Package;
@@ -25,6 +26,11 @@ impl Run for Install {
             ctx.package = Some(Package::new(current_dir));
         }
         let package = ctx.package.as_ref().unwrap();
+
+        if !package.config().exists() {
+            // TODO: Struggling to write a good `Context` type.
+            Init::new().run(&mut ctx.clone())?;
+        }
 
         if ctx.config.is_none() {
             let path = package.config();
