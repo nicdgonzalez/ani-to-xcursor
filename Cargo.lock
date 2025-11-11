@@ -36,6 +36,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ani-fuzz"
+version = "0.0.0"
+dependencies = [
+ "ani",
+ "libfuzzer-sys",
+]
+
+[[package]]
 name = "ani-to-xcursor"
 version = "0.1.0"
 dependencies = [
