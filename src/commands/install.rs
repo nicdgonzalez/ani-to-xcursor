@@ -28,7 +28,6 @@ impl Run for Install {
         let package = ctx.package.as_ref().unwrap();
 
         if !package.config().exists() {
-            // TODO: Struggling to write a good `Context` type.
             Init::new().run(&mut ctx.clone())?;
         }
 
@@ -41,7 +40,9 @@ impl Run for Install {
         let theme_input = package.build().theme().as_path().to_owned();
         let theme_name = config.theme().to_owned();
 
-        Build::new(self.strict).run(ctx)?;
+        if !package.build().as_path().exists() {
+            Build::new(self.strict).run(ctx)?;
+        }
 
         install_theme(&theme_input, &theme_name)?;
         print_install_instructions(&theme_name)?;

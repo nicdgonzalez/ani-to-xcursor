@@ -29,7 +29,7 @@ pub struct Ani {
     header: Header,
     rates: Option<Vec<u32>>,
     sequence: Option<Vec<u32>>,
-    frames: Vec<Vec<u8>>,
+    frames: Vec<Frame>,
 }
 
 impl Ani {
@@ -107,12 +107,6 @@ impl Ani {
             .and_then(|_| parser.expect_identifier(*b"fram"))
             .and_then(|()| parse_fram_chunk(&mut parser, header.frames()))?;
 
-        debug_assert_eq!(
-            parser.bytes_remaining(),
-            0,
-            "I secretly knew this was a possibility..."
-        );
-
         Ok(Self {
             metadata,
             header,
@@ -122,9 +116,24 @@ impl Ani {
         })
     }
 
-    // TODO: Refactor. :-)
+    /// Decode ANI data.
+    ///
+    /// This function does its best to parse the data, whether the chunks are the proper order
+    /// or not. If you know that the data is structured correctly, you can use
+    /// [`Self::from_bytes_strict`] instead.
+    ///
+    /// # Panics
+    ///
+    /// This function panics on architectures where `usize` is smaller than a `u32`.
+    ///
+    /// # Errors
+    ///
+    /// This function returns an error if:
+    ///
+    /// - Data has an invalid file signature.
+    /// - Data does not follow the ANI file format specification.
     pub fn from_bytes(data: &[u8]) -> Result<Self, DecodeError> {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[derive(PartialEq, Eq)]
         enum Kind {
             Metadata,
             Header,
@@ -143,87 +152,53 @@ impl Ani {
         let mut chunks = Vec::<Chunk>::new();
 
         while parser.bytes_remaining() > 0 {
-            debug!("bytes remaining: {}", parser.bytes_remaining());
+            if parser.bytes_remaining() == 1 {
+                // TODO: Padding byte maybe?
+                // https://en.wikipedia.org/wiki/Resource_Interchange_File_Format#Explanation
+                _ = parser.read_bytes(1);
+                continue;
+            }
+
             let identifier = parser.read::<Identifier>()?;
-            debug!(
-                "Identifier: {:?}",
-                String::from_utf8_lossy(&identifier).to_string()
-            );
 
             let (kind, size) = match &identifier {
                 b"LIST" => {
                     let s = parser.read_size()?;
-                    debug!("size of LIST: {s}");
                     let next = parser.read::<Identifier>()?;
 
-                    debug!(
-                        "Next Identifier: {:?}",
-                        String::from_utf8_lossy(&next).to_string()
-                    );
-
                     match &next {
-                        b"info" => {
-                            // LIST <size> info INAM|IART
-                            // -4 because parse_info_chunk starts at INAM/IART, not info.
-                            let size = usize::try_from(s).expect("u32 overflowed usize") - 4;
-                            (Kind::Metadata, size)
-                        }
-                        b"fram" => {
-                            // LIST <size> fram icon
-                            // -4 because parse_info_chunk starts at icon, not fram.
-                            let size = usize::try_from(s).expect("u32 overflowed usize") - 4;
-                            (Kind::Frames, size)
-                        }
-                        _ => {
-                            return Err(DecodeError::UnexpectedIdentifier {
-                                expected: *b"YYYY",
-                                actual: next,
-                            });
-                        }
+                        b"info" => (Kind::Metadata, s - 4),
+                        b"fram" => (Kind::Frames, s - 4),
+                        _ => return Err(DecodeError::UnknownIdentifier { actual: next }),
                     }
                 }
                 b"anih" => {
-                    let s = parser.peek_size()?;
-                    // +4 to add back in the size that we peeked.
-                    let size = usize::try_from(s).expect("u32 overflowed usize") + 4;
-                    (Kind::Header, size)
+                    let size = parser.peek_size()?;
+                    (Kind::Header, 4 + size)
                 }
                 b"rate" => {
-                    let s = parser.peek_size()?;
-                    // +4 to add back in the size that we peeked.
-                    let size = usize::try_from(s).expect("u32 overflowed usize") + 4;
-                    (Kind::Rate, size)
+                    let size = parser.peek_size()?;
+                    (Kind::Rate, 4 + size)
                 }
                 b"seq " => {
-                    let s = parser.peek_size()?;
-                    // +4 to add back in the size that we peeked.
-                    let size = usize::try_from(s).expect("u32 overflowed usize") + 4;
-                    (Kind::Sequence, size)
+                    let size = parser.peek_size()?;
+                    (Kind::Sequence, 4 + size)
                 }
-                _ => {
-                    // TODO: Create new variant for this particular error.
-                    return Err(DecodeError::UnexpectedIdentifier {
-                        expected: *b"XXXX",
-                        actual: identifier,
-                    });
-                }
+                _ => return Err(DecodeError::UnknownIdentifier { actual: identifier }),
             };
 
-            debug!("size: {size}");
             chunks.push(Chunk {
                 kind,
-                data: parser.read_bytes(size)?,
+                data: parser.read_bytes(usize::try_from(size).expect("u32 overflowed usize"))?,
             });
         }
 
-        let metadata = chunks
-            .iter()
-            .find(|chunk| chunk.kind == Kind::Metadata)
-            .and_then(|chunk| {
-                let mut parser = Parser::new(&chunk.data);
-                // TODO: Loss of information; we don't know if it was missing or if it failed.
-                parse_info_chunk(&mut parser).ok()
-            });
+        let metadata = if let Some(chunk) = chunks.iter().find(|c| c.kind == Kind::Metadata) {
+            let mut parser = Parser::new(&chunk.data);
+            Some(parse_info_chunk(&mut parser)?)
+        } else {
+            None
+        };
 
         let header = chunks
             .iter()
@@ -234,23 +209,19 @@ impl Ani {
                 parse_anih_chunk(&mut parser)
             })?;
 
-        let rates = chunks
-            .iter()
-            .find(|chunk| chunk.kind == Kind::Rate)
-            .and_then(|chunk| {
-                let mut parser = Parser::new(&chunk.data);
-                // TODO: Loss of information; we don't know if it was missing or if it failed.
-                parse_rate_chunk(&mut parser).ok()
-            });
+        let rates = if let Some(chunk) = chunks.iter().find(|c| c.kind == Kind::Rate) {
+            let mut parser = Parser::new(&chunk.data);
+            Some(parse_rate_chunk(&mut parser)?)
+        } else {
+            None
+        };
 
-        let sequence = chunks
-            .iter()
-            .find(|chunk| chunk.kind == Kind::Sequence)
-            .and_then(|chunk| {
-                let mut parser = Parser::new(&chunk.data);
-                // TODO: Loss of information; we don't know if it was missing or if it failed.
-                parse_seq_chunk(&mut parser).ok()
-            });
+        let sequence = if let Some(chunk) = chunks.iter().find(|c| c.kind == Kind::Sequence) {
+            let mut parser = Parser::new(&chunk.data);
+            Some(parse_seq_chunk(&mut parser)?)
+        } else {
+            None
+        };
 
         let frames = chunks
             .iter()
@@ -298,7 +269,7 @@ impl Ani {
 
     /// Collection of images stored within the ANI file.
     #[must_use]
-    pub fn frames(&self) -> &[Vec<u8>] {
+    pub fn frames(&self) -> &[Frame] {
         &self.frames
     }
 }
@@ -423,34 +394,29 @@ fn parse_seq_chunk(parser: &mut Parser) -> Result<Vec<u32>, DecodeError> {
 }
 
 /// Decode the chunk containing the frames.
-fn parse_fram_chunk(parser: &mut Parser, frames_count: u32) -> Result<Vec<Vec<u8>>, DecodeError> {
+fn parse_fram_chunk(parser: &mut Parser, frames_count: u32) -> Result<Vec<Frame>, DecodeError> {
     let mut frames = Vec::with_capacity(frames_count as usize);
 
     for _ in 0..frames_count {
         parser.expect_identifier(*b"icon")?;
-        let s = parser.read_size()?;
-        let size = usize::try_from(s).expect("u32 overflowed usize");
-        frames.push(parser.read_bytes(size)?);
+        _ = parser.read_size()?;
 
-        // debug!("icon size: {size}");
-        // debug!("bytes remaining: {}", parser.bytes_remaining());
+        let header = parser.read::<IconDir>()?;
+        let mut images = Vec::with_capacity(header.image_count() as usize);
 
-        // let header = parser.read::<IconDir>()?;
-        // debug!("icon header: {:?}", header);
-        // debug!("bytes remaining: {}", parser.bytes_remaining());
-        // let mut images = Vec::with_capacity(header.image_count() as usize);
+        for _ in 0..header.image_count() {
+            let header = parser.read::<IconDirEntry>()?;
+            let data_size = usize::try_from(header.data_size()).expect("u32 overflowed usize");
 
-        // for i in 0..header.image_count() {
-        //     debug!("image #{i}");
-        //     let header = parser.read::<IconDirEntry>()?;
-        //     debug!("image header: {:?}", header);
-        //     debug!("bytes remaining: {}", parser.bytes_remaining());
-        //     let data = parser.read_bytes(header.data_size() as usize)?;
-        //     debug!("bytes remaining: {}", parser.bytes_remaining());
-        //     images.push(Image::new(header, data));
-        // }
+            let padding = usize::try_from(header.data_offset()).unwrap()
+                - size_of::<IconDir>()
+                - size_of::<IconDirEntry>();
 
-        // frames.push(Frame::new(header, images));
+            let data = parser.read_bytes(padding + data_size)?;
+            images.push(Image::new(header, data));
+        }
+
+        frames.push(Frame::new(header, images));
     }
 
     Ok(frames)

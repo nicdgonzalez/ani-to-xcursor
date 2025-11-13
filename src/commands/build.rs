@@ -174,7 +174,7 @@ fn extract_frames(ani: &Ani, output_dir: &Path) -> anyhow::Result<Vec<String>> {
 
     for (i, frame) in ani.frames().iter().enumerate() {
         let path = output_dir.join(&names[i]);
-        let reader = io::Cursor::new(frame);
+        let reader = io::Cursor::new(frame.to_bytes());
         let image = image::load(reader, ImageFormat::Ico).context("failed to load frame image")?;
         image.save_with_format(&path, ImageFormat::Png)?;
     }
@@ -209,20 +209,18 @@ fn build_xcursor_config(ani: &Ani, frame_names: &[String], output: &Path) -> any
 
         // First byte of the ICONDIRENTRY structure.
         // TODO: Move this data to the `ani` crate.
-        let width = frame[6];
+        let image = frame
+            .images()
+            .first()
+            .expect("expected at least one image in frame");
+        let size = image.header().width();
+        let x = image.header().hotspot_x();
+        let y = image.header().hotspot_y();
 
         let file_name = &frame_names[i];
         let duration = rates[i] * (JIFFY.round() as u32);
 
-        writeln!(
-            contents,
-            "{size} {x} {y} {file_name} {duration}",
-            size = width,
-            x = u16::from_le_bytes(frame[10..=11].try_into().unwrap()),
-            y = u16::from_le_bytes(frame[12..=13].try_into().unwrap()),
-            file_name = file_name,
-            duration = duration,
-        )?;
+        writeln!(contents, "{size} {x} {y} {file_name} {duration}",)?;
     }
 
     fs::write(output, contents).context("failed to create Xcursor configuration file")?;

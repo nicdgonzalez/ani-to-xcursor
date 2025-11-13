@@ -25,6 +25,12 @@ pub enum DecodeError {
         actual: Identifier,
     },
 
+    /// The next chunk had an unregistered identifier.
+    UnknownIdentifier {
+        /// The chunk identifier that was received.
+        actual: Identifier,
+    },
+
     /// The size of the "ACON" chunk does not match the length of the data.
     SizeMismatch {
         /// The size received for the "ACON" chunk.
@@ -53,6 +59,7 @@ impl error::Error for DecodeError {
             Self::ReadFailure { ref source } => Some(source),
             Self::NotEnoughBytes { .. }
             | Self::UnexpectedIdentifier { .. }
+            | Self::UnknownIdentifier { .. }
             | Self::SizeMismatch { .. }
             | Self::InvalidHeaderSize { .. }
             | Self::InvalidAlignmentU32
@@ -72,6 +79,10 @@ impl fmt::Display for DecodeError {
                 let expected = String::from_utf8_lossy(&expected).to_string();
                 let actual = String::from_utf8_lossy(&actual).to_string();
                 write!(f, "expected chunk identifier {expected:?}, got {actual:?}")
+            }
+            Self::UnknownIdentifier { actual } => {
+                let actual = String::from_utf8_lossy(&actual).to_string();
+                write!(f, "unknown chunk identifier, got {actual:?}")
             }
             Self::SizeMismatch { expected, actual } => {
                 write!(f, "expected chunk to be {expected} bytes, got {actual}")
