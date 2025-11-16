@@ -1,4 +1,5 @@
 use std::fmt::Write as _;
+use std::fs::File;
 use std::io::{self, ErrorKind, Write as _};
 use std::path::Path;
 use std::process::Command;
@@ -7,7 +8,6 @@ use std::{env, fs, iter, path, thread};
 use ani::de::{Ani, JIFFY};
 use anyhow::{anyhow, Context as _};
 use colored::Colorize as _;
-use image::ImageFormat;
 use tracing::{error, error_span, info};
 
 use crate::commands::Run;
@@ -167,23 +167,36 @@ fn process_cursor(cursor: &Cursor, build: &BuildDir, strict: bool) -> anyhow::Re
     Ok(())
 }
 
-fn extract_frames(ani: &Ani, output_dir: &Path) -> anyhow::Result<Vec<String>> {
-    let names = (0..ani.frames().len())
-        .map(|i| format!("{i:0>2}.png"))
-        .collect::<Vec<_>>();
+fn extract_frames(ani: &Ani, output_dir: &Path) -> anyhow::Result<Vec<Vec<String>>> {
+    let mut names = Vec::with_capacity(ani.frames().len());
+
+    // TODO: (See also todo in `build_xcursor_config`):
+    // Maybe sort PNGs by size to make it easier to bulk delete undesired cursors?
 
     for (i, frame) in ani.frames().iter().enumerate() {
-        let path = output_dir.join(&names[i]);
-        let reader = io::Cursor::new(frame.to_bytes());
-        let image = image::load(reader, ImageFormat::Ico).context("failed to load frame image")?;
-        image.save_with_format(&path, ImageFormat::Png)?;
+        let mut size_names = Vec::with_capacity(frame.len());
+        for image in frame {
+            let width = image.width();
+            let name = format!("{i:0>2}-{width}.png");
+            let path = output_dir.join(&name);
+
+            let file = File::create(&path)?;
+
+            image.write_png(&file)?;
+            size_names.push(name);
+        }
+        names.push(size_names);
     }
 
     Ok(names)
 }
 
 #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn build_xcursor_config(ani: &Ani, frame_names: &[String], output: &Path) -> anyhow::Result<()> {
+fn build_xcursor_config(
+    ani: &Ani,
+    frame_names: &[Vec<String>],
+    output: &Path,
+) -> anyhow::Result<()> {
     let sequence = ani.sequence().map_or_else(
         || {
             info!("ANI sequence missing, using default");
@@ -201,26 +214,46 @@ fn build_xcursor_config(ani: &Ani, frame_names: &[String], output: &Path) -> any
         ToOwned::to_owned,
     );
 
-    let mut contents = String::with_capacity(20 * sequence.len());
+    // TODO: Calculate the required capacity and pre-allocate.
+    let mut contents = String::new();
+
+    // TODO: Sort the entries by size.
+    // Right now, the `.cursor` file looks like:
+    //
+    // 00-32.png
+    // 00-48.png
+    // 00-64.png
+    // 01-32.png
+    // 01-48.png
+    // 01-64.png
+    //
+    // Instead, I want:
+    //
+    // 00-32.png
+    // 01-32.png
+    //
+    // 00-48.png
+    // 01-48.png
+    //
+    // 00-64.png
+    // 01-64.png
+    //
+    // This way, you can delete a whole group of cursors very easily if you wanted to.
+    //
+    // (Maybe also group them when saving them as well...)
 
     for i in sequence {
         let i = usize::try_from(i).context("invalid sequence index")?;
         let frame = &ani.frames()[i];
 
-        // First byte of the ICONDIRENTRY structure.
-        // TODO: Move this data to the `ani` crate.
-        let image = frame
-            .images()
-            .first()
-            .expect("expected at least one image in frame");
-        let size = image.header().width();
-        let x = image.header().hotspot_x();
-        let y = image.header().hotspot_y();
+        for (j, entry) in frame.iter().enumerate() {
+            let size = entry.width();
+            let (x, y) = entry.cursor_hotspot().unwrap_or((0, 0));
+            let file_name = &frame_names[i][j];
+            let duration = rates[i] * (JIFFY.round() as u32);
 
-        let file_name = &frame_names[i];
-        let duration = rates[i] * (JIFFY.round() as u32);
-
-        writeln!(contents, "{size} {x} {y} {file_name} {duration}",)?;
+            writeln!(contents, "{size} {x} {y} {file_name} {duration}",)?;
+        }
     }
 
     fs::write(output, contents).context("failed to create Xcursor configuration file")?;
@@ -255,6 +288,11 @@ fn link_to_theme(
 
     for alias in aliases {
         let alias_link = theme_cursors_dir.join(alias);
+
+        if alias_link.exists() {
+            continue;
+        }
+
         symlink(&target_link, &alias_link)?;
         info!("created alias: {alias}");
     }

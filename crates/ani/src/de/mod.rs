@@ -3,17 +3,16 @@
 #![allow(dead_code)]
 
 mod error;
-mod frame;
 mod header;
 mod metadata;
 mod parser;
 
 use std::path::Path;
-use std::{fs, mem};
+use std::{fs, io, mem};
 
 use error::DecodeError;
-use frame::{Frame, IconDir, IconDirEntry, Image};
 use header::Header;
+use ico::IconImage;
 use metadata::Metadata;
 use parser::Parser;
 use tracing::debug;
@@ -29,7 +28,7 @@ pub struct Ani {
     header: Header,
     rates: Option<Vec<u32>>,
     sequence: Option<Vec<u32>>,
-    frames: Vec<Frame>,
+    frames: Vec<Vec<IconImage>>,
 }
 
 impl Ani {
@@ -160,6 +159,8 @@ impl Ani {
             }
 
             let identifier = parser.read::<Identifier>()?;
+            debug!("identifier: {:?}", String::from_utf8_lossy(&identifier));
+            debug!("bytes remaining: {}", parser.bytes_remaining());
 
             let (kind, size) = match &identifier {
                 b"LIST" => {
@@ -269,7 +270,7 @@ impl Ani {
 
     /// Collection of images stored within the ANI file.
     #[must_use]
-    pub fn frames(&self) -> &[Frame] {
+    pub fn frames(&self) -> &[Vec<IconImage>] {
         &self.frames
     }
 }
@@ -394,29 +395,29 @@ fn parse_seq_chunk(parser: &mut Parser) -> Result<Vec<u32>, DecodeError> {
 }
 
 /// Decode the chunk containing the frames.
-fn parse_fram_chunk(parser: &mut Parser, frames_count: u32) -> Result<Vec<Frame>, DecodeError> {
+fn parse_fram_chunk(
+    parser: &mut Parser,
+    frames_count: u32,
+) -> Result<Vec<Vec<IconImage>>, DecodeError> {
     let mut frames = Vec::with_capacity(frames_count as usize);
 
     for _ in 0..frames_count {
         parser.expect_identifier(*b"icon")?;
-        _ = parser.read_size()?;
+        let s = parser.read_size()?;
+        let size = usize::try_from(s).expect("u32 overflowed usize");
 
-        let header = parser.read::<IconDir>()?;
-        let mut images = Vec::with_capacity(header.image_count() as usize);
+        let buffer = parser.read_bytes(size)?;
+        let reader = io::Cursor::new(&buffer);
 
-        for _ in 0..header.image_count() {
-            let header = parser.read::<IconDirEntry>()?;
-            let data_size = usize::try_from(header.data_size()).expect("u32 overflowed usize");
+        let icon_dir = ico::IconDir::read(reader).expect("todo");
+        let mut images = Vec::with_capacity(icon_dir.entries().len());
 
-            let padding = usize::try_from(header.data_offset()).unwrap()
-                - size_of::<IconDir>()
-                - size_of::<IconDirEntry>();
-
-            let data = parser.read_bytes(padding + data_size)?;
-            images.push(Image::new(header, data));
+        for entry in icon_dir.entries() {
+            let image = entry.decode().expect("todo");
+            images.push(image);
         }
 
-        frames.push(Frame::new(header, images));
+        frames.push(images);
     }
 
     Ok(frames)

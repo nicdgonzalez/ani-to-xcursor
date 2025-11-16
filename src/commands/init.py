@@ -52,6 +52,8 @@ class Cursors(NamedTuple):
     move: str  # SizeAll [12]
     alternate: str  # UpArrow [13]
     link: str  # Hand [14]
+    pin: str  # Location(?) [15]  I don't think Linux uses this one.
+    person: str  # Person(?) [16]  I don't think Linux uses this one.
 
 
 def setup_parser() -> argparse.ArgumentParser:
@@ -267,6 +269,16 @@ def create_config(theme_name: str, cursors: Cursors) -> dict[str, Any]:
             {
                 "name": "link",
                 "input": as_input(cursors.link),
+                "aliases": [],
+            },
+            {
+                "name": "pin",
+                "input": as_input(cursors.pin),
+                "aliases": [],
+            },
+            {
+                "name": "person",
+                "input": as_input(cursors.person),
                 "aliases": [],
             },
         ],

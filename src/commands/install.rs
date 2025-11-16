@@ -40,9 +40,7 @@ impl Run for Install {
         let theme_input = package.build().theme().as_path().to_owned();
         let theme_name = config.theme().to_owned();
 
-        if !package.build().as_path().exists() {
-            Build::new(self.strict).run(ctx)?;
-        }
+        Build::new(self.strict).run(ctx)?;
 
         install_theme(&theme_input, &theme_name)?;
         print_install_instructions(&theme_name)?;
