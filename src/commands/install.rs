@@ -46,7 +46,7 @@ impl Run for Install {
         let mut target = get_icons_dir().context("failed to get icons directory")?;
         target.push(theme_name);
 
-        if target.exists() {
+        if target.try_exists().is_ok_and(|exists| exists) {
             writeln!(
                 io::stderr(),
                 "{}",

@@ -164,7 +164,6 @@ pub const CURSORS: [CursorInfo; 17] = [
     CursorInfo {
         name: "move",
         aliases: &[
-            "crosshair",
             "cell",
             "fleur",
             "size_all",
@@ -190,7 +189,6 @@ pub const CURSORS: [CursorInfo; 17] = [
         aliases: &[
             "pointer",
             "pointing_hand",
-            "hand",
             "hand1",
             "hand2",
             "9d800788f1b08800ae810202380a0822",
