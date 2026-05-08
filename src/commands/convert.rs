@@ -7,6 +7,7 @@ use std::process::Command;
 use ani::{Ani, Image};
 use anyhow::Context as _;
 use colored::Colorize as _;
+use image::RgbaImage;
 use image::imageops::FilterType;
 
 use crate::commands::prelude::*;
@@ -52,8 +53,6 @@ impl Run for Convert {
     }
 }
 
-// TODO: Figure out a way to decouple some of this code - This function is doing a lot because
-// it controls a lot of how the output directory is structured.
 /// Convert from ANI to Xcursor.
 pub(crate) fn convert_cursor(
     input: &Path,
@@ -80,105 +79,9 @@ pub(crate) fn convert_cursor(
     output_dir.push(file_stem);
     fs::create_dir_all(&output_dir).context("failed to create frame output directory")?;
 
-    // TODO: Refactor this horrible mess.
-
     debug_assert!(output_dir.try_exists().is_ok_and(|exists| exists));
 
-    let extracted = extract_frames(ani.frames(), &output_dir).collect::<Vec<_>>();
-    let rates = ani.rates_or_default();
-    let sequence = ani.sequence_or_default();
-
-    let mut entries = Vec::new();
-
-    // Save frames to the file system for xcursorgen to reference.
-    for (index, frame) in &extracted {
-        let mut target_sizes = sizes.to_owned();
-        let mut largest = None::<(Size, &Extracted)>;
-
-        for (size, variant) in frame {
-            let size = if let Ok(size) = u8::try_from(*size) {
-                Size(size)
-            } else {
-                tracing::warn!("non-standard cursor size {size}; skipping");
-                continue;
-            };
-
-            let writer = File::create(&variant.path)?;
-            tracing::info!("created file: {:#}", variant.path.display());
-            variant.image.write_png(writer)?;
-
-            if let Some(i) = target_sizes.iter().position(|&target| target == size) {
-                _ = target_sizes.remove(i);
-            }
-
-            if largest.is_none() || largest.is_some_and(|(largest_size, _)| size > largest_size) {
-                largest = Some((size, variant));
-            }
-        }
-
-        // loop through remaining targets, using largest image to upscale or downscale.
-
-        if let Some((original_size, original_extracted)) = largest {
-            for target in target_sizes {
-                let original_size = u16::from(original_size.0);
-                let target_size = u16::from(target.0);
-
-                let (original_x, original_y) =
-                    original_extracted.image.cursor_hotspot().unwrap_or((0, 0));
-
-                let scaled_x = original_x / original_size * target_size;
-                let scaled_y = original_y / original_size * target_size;
-
-                let file_name = format!("{index:02}-{target_size}.png");
-                let path = output_dir.join(&file_name);
-                assert!(
-                    !path.try_exists().is_ok_and(|exists| exists),
-                    "scaled frame already exists"
-                );
-
-                let original_image =
-                    image::open(&original_extracted.path).context("failed to open source image")?;
-
-                let scaled_image = original_image.resize_exact(
-                    u32::from(target_size),
-                    u32::from(target_size),
-                    FilterType::Lanczos3,
-                );
-
-                scaled_image.save(&path).context("failed to resize image")?;
-
-                let rate = rates
-                    .get(*index)
-                    .with_context(|| format!("rate not found at index {index}"))?;
-                let duration = u64::from(*rate) * 1000 / 60;
-
-                entries.push(XcursorEntry {
-                    size: u32::from(target_size),
-                    x: scaled_x,
-                    y: scaled_y,
-                    path,
-                    duration,
-                });
-            }
-        }
-    }
-
-    let frames = extracted
-        .into_iter()
-        .map(|(_, frame)| {
-            frame
-                .into_iter()
-                .map(|(_, extracted)| extracted)
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-
-    entries.extend(get_xcursorgen_entries(
-        &sequence,
-        &rates,
-        frames.as_slice(),
-    )?);
-
+    let mut entries = get_entries(&ani, &output_dir, sizes)?;
     entries.sort_by_key(|entry| entry.size);
 
     // Generate the xcursorgen configuration file
@@ -191,6 +94,117 @@ pub(crate) fn convert_cursor(
     call_xcursorgen(&output_dir, &config, &xcursor).context("failed to create xcursor")?;
 
     Ok(xcursor)
+}
+
+fn get_entries(ani: &Ani, output_dir: &Path, sizes: &[Size]) -> anyhow::Result<Vec<XcursorEntry>> {
+    let extracted = extract_frames(ani.frames(), output_dir).collect::<Vec<_>>();
+
+    let rates = ani.rates_or_default();
+    let sequence = ani.sequence_or_default();
+
+    let mut entries = Vec::new();
+
+    for (index, frame) in &extracted {
+        process_frame(
+            frame,
+            *index,
+            output_dir,
+            &rates,
+            &mut entries,
+            sizes.to_owned(),
+        )?;
+    }
+
+    let frames = extracted
+        .into_iter()
+        .map(|(_, frame)| {
+            frame
+                .into_iter()
+                .map(|(_, extracted)| extracted)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    entries.extend(get_xcursorgen_entries(&sequence, &rates, &frames)?);
+
+    Ok(entries)
+}
+
+fn process_frame(
+    frame: &[(u32, Extracted<'_>)],
+    index: usize,
+    output_dir: &Path,
+    rates: &[u32],
+    entries: &mut Vec<XcursorEntry>,
+    mut target_sizes: Vec<Size>,
+) -> anyhow::Result<()> {
+    let mut largest = None::<(Size, &Extracted)>;
+
+    for (size, variant) in frame {
+        let Ok(size) = Size::new(*size) else {
+            tracing::warn!("skipping non-standard cursor size {size}");
+            continue;
+        };
+
+        // Save frames to the file system for xcursorgen to reference.
+        let writer = File::create(&variant.path)?;
+        tracing::info!("created file: {:#}", variant.path.display());
+        variant.image.write_png(writer)?;
+
+        target_sizes.retain(|&target| target != size);
+
+        if largest.is_none() || largest.is_some_and(|(largest_size, _)| size > largest_size) {
+            largest = Some((size, variant));
+        }
+    }
+
+    // loop through remaining targets, using largest image to upscale or downscale.
+    if let Some((original_size, original_extracted)) = largest {
+        for target in target_sizes {
+            let original_size = u16::from(original_size.0);
+            let target_size = u16::from(target.0);
+
+            let (original_x, original_y) =
+                original_extracted.image.cursor_hotspot().unwrap_or((0, 0));
+
+            let scaled_x = original_x / original_size * target_size;
+            let scaled_y = original_y / original_size * target_size;
+
+            let file_name = format!("{index:02}-{target_size}.png");
+            let path = output_dir.join(&file_name);
+
+            let original_image = RgbaImage::from_raw(
+                original_extracted.image.width(),
+                original_extracted.image.height(),
+                original_extracted.image.rgba_data().to_vec(),
+            )
+            .context("failed to load source image")?;
+
+            let scaled_image = image::imageops::resize(
+                &original_image,
+                u32::from(target_size),
+                u32::from(target_size),
+                FilterType::Lanczos3,
+            );
+
+            scaled_image.save(&path).context("failed to resize image")?;
+
+            let rate = rates
+                .get(index)
+                .with_context(|| format!("rate not found at index {index}"))?;
+            let duration = u64::from(*rate) * 1000 / 60;
+
+            entries.push(XcursorEntry {
+                size: u32::from(target_size),
+                x: scaled_x,
+                y: scaled_y,
+                path,
+                duration,
+            });
+        }
+    }
+
+    Ok(())
 }
 
 fn extract_frames<'a>(

@@ -2,10 +2,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 
 pub fn default_sizes() -> Vec<Size> {
-    vec![Size(32), Size(48), Size(64), Size(96)]
+    Size::VALID_VALUES
+        .iter()
+        .map(|&value| Size(value))
+        .collect()
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -62,7 +65,14 @@ impl Config {
 pub struct Size(pub u8);
 
 impl Size {
-    pub const VALID_VALUES: &[u8] = &[24, 32, 48, 64, 96];
+    pub const VALID_VALUES: &[u8] = &[24, 32, 48, 64, 96, 128];
+
+    pub fn new(value: u32) -> anyhow::Result<Self> {
+        match value {
+            24 | 32 | 48 | 64 | 96 | 128 => Ok(Self(value.try_into().unwrap())),
+            _ => Err(anyhow!("invalid cursor size {value}")),
+        }
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for Size {
@@ -73,15 +83,7 @@ impl<'de> serde::Deserialize<'de> for Size {
         use serde::de::Error as SerdeError;
 
         let value = u8::deserialize(deserializer)?;
-
-        if Self::VALID_VALUES.contains(&value) {
-            Ok(Self(value))
-        } else {
-            Err(SerdeError::custom(format!(
-                "invalid cursor size {value}, allowed values: {:?}",
-                Self::VALID_VALUES
-            )))
-        }
+        Self::new(u32::from(value)).map_err(|err| SerdeError::custom(err.to_string()))
     }
 }
 
@@ -93,14 +95,7 @@ impl FromStr for Size {
             .parse::<u8>()
             .map_err(|_| anyhow::anyhow!("{s:?} is not a valid number"))?;
 
-        if Self::VALID_VALUES.contains(&value) {
-            Ok(Size(value))
-        } else {
-            Err(anyhow::anyhow!(
-                "invalid cursor size {value}, allowed values: {:?}",
-                Self::VALID_VALUES
-            ))
-        }
+        Self::new(u32::from(value))
     }
 }
 
