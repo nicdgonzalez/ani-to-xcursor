@@ -319,8 +319,8 @@ dependencies = [
 
 [[package]]
 name = "inf"
-version = "0.1.0"
-source = "git+https://github.com/nicdgonzalez/inf.git#f0d7d3cb0b16f75426b42c2a2b08484d99ba7c9f"
+version = "0.1.1"
+source = "git+https://github.com/nicdgonzalez/inf.git#5c7a2ceb497da076a19fb34a2be7571c0cff8962"
 
 [[package]]
 name = "is_terminal_polyfill"

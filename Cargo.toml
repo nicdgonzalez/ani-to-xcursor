@@ -14,7 +14,7 @@ clap-verbosity-flag = { version = "3.0.4", default-features = false, features = 
 colored = "3.0.0"
 dirs = "6.0.0"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-inf = { version = "0.1.0", git = "https://github.com/nicdgonzalez/inf.git" }
+inf = { version = "0.1.1", git = "https://github.com/nicdgonzalez/inf.git" }
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "0.9.11"
 tracing = "0.1.44"
