@@ -35,6 +35,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "xcur",
 ]
 
 [[package]]
@@ -797,3 +798,10 @@ name = "winnow"
 version = "0.7.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
+
+[[package]]
+name = "xcur"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+]

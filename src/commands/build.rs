@@ -27,9 +27,9 @@ impl Run for Build {
         let config = Config::from_path(&manifest_path).context("failed to read manifest file")?;
 
         ctx.package
-            .build()
+            .theme()
             .create_all(config.theme())
-            .context("failed to create output directory")?;
+            .context("failed to create theme output directory")?;
 
         let sizes = config.sizes().to_owned();
 
@@ -87,35 +87,20 @@ impl Run for Build {
 fn handler(cursor: &Cursor, package: &Package, sizes: &[Size]) -> anyhow::Result<()> {
     // Convert from ANI to Xcursor
     let input = package.as_path().join(cursor.input());
-    let xcursor = convert_cursor(&input, package, sizes).context("failed to create Xcursor")?;
+    let output = package.theme().cursors().join(cursor.name());
+    convert_cursor(&input, sizes, &output).context("failed to create Xcursor")?;
 
     // Link Xcursor to the theme
-    let cursors_dir = package.build().theme().cursors();
+    let cursors_dir = package.theme().cursors();
     debug_assert!(cursors_dir.try_exists().is_ok_and(|exists| exists));
-    let target = cursors_dir.join(cursor.name());
-    symlink_force(&xcursor, &target).context("failed to link Xcursor to theme")?;
 
     // Add aliases to the theme
     for alias in cursor.aliases() {
         let target = cursors_dir.join(alias);
-        symlink(&xcursor, &target).with_context(|| format!("failed to add alias: {alias}"))?;
+        symlink(&output, &target).with_context(|| format!("failed to add alias: {alias}"))?;
     }
 
     Ok(())
-}
-
-fn symlink_force(source: &Path, target: &Path) -> anyhow::Result<()> {
-    let status = Command::new("ln")
-        .args(["--symbolic", "--force"])
-        .args([source, target])
-        .status()
-        .context("failed to execute ln")?;
-
-    match status.code() {
-        Some(0) => Ok(()),
-        Some(code) => Err(anyhow::anyhow!("process failed with exit code: {code}")),
-        None => Err(anyhow::anyhow!("process terminated due to signal")),
-    }
 }
 
 pub(crate) fn symlink(source: &Path, target: &Path) -> anyhow::Result<()> {

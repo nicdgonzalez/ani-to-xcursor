@@ -33,14 +33,14 @@ impl Run for Install {
             }
         }
 
-        if !ctx.package.build().as_path().exists() {
+        if !ctx.package.theme().as_path().exists() {
             Build {}.run(ctx)?;
         }
 
         let config =
             Config::from_path(&ctx.package.manifest()).context("failed to read manifest file")?;
 
-        let theme = ctx.package.build().theme();
+        let theme = ctx.package.theme();
         let theme_name = config.theme();
 
         let mut target = get_icons_dir().context("failed to get icons directory")?;

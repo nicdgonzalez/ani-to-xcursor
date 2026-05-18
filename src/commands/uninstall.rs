@@ -21,7 +21,7 @@ impl Run for Uninstall {
         }
 
         // Delete all of the build artifacts.
-        let build = &ctx.package.build();
+        let build = &ctx.package.theme();
 
         match fs::remove_dir_all(build.as_path()) {
             Ok(()) => tracing::info!("directory deleted: {:#}", build.as_path().display()),
