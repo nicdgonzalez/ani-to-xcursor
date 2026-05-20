@@ -1,9 +1,10 @@
+use std::collections::BTreeSet;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fs, io};
 
-use ani::{Ani, Image};
+use ani::Ani;
 use anyhow::Context as _;
 use colored::Colorize as _;
 use image::imageops::FilterType;
@@ -50,6 +51,13 @@ impl Run for Convert {
     }
 }
 
+struct Image {
+    rgba: RgbaImage,
+    size: Size,
+    hotspot_x: u16,
+    hotspot_y: u16,
+}
+
 /// Convert from ANI to Xcursor.
 pub(crate) fn convert_cursor(input: &Path, sizes: &[Size], output: &Path) -> anyhow::Result<()> {
     let ani = Ani::open(input).context("failed to decode ANI file")?;
@@ -58,18 +66,20 @@ pub(crate) fn convert_cursor(input: &Path, sizes: &[Size], output: &Path) -> any
         .frames()
         .iter()
         .enumerate()
-        .map(|(i, frame)| {
-            debug!("Frame #{i}");
-            let mut sizes = sizes.to_owned();
-            let mut images = Vec::<(Size, xcur::Image)>::new();
-            let mut largest = None::<(&Image, RgbaImage)>;
-            let rate = rates
-                .get(i)
-                .with_context(|| format!("rate not found at index {i}"))?;
-            let delay = Duration::from_millis(u64::from(*rate) * 1000 / 60);
-            debug!("Delay: {delay:?}");
+        .map(|(frame_idx, frame)| {
+            debug!("Frame #{frame_idx}");
 
-            for (j, image) in frame.iter().enumerate() {
+            let mut sizes: BTreeSet<_> = sizes.iter().copied().collect();
+            let mut images = Vec::<xcur::Image>::new();
+            let mut largest = None::<Image>;
+
+            let delay = rates
+                .get(frame_idx)
+                .map(|&rate| Duration::from_millis(u64::from(rate) * 1000 / 60))
+                .inspect(|delay| debug!("Delay: {delay:?}"))
+                .with_context(|| format!("rate not found at index {frame_idx}"))?;
+
+            for (image_idx, image) in frame.iter().enumerate() {
                 let width = image.width();
                 let height = image.height();
 
@@ -77,93 +87,65 @@ pub(crate) fn convert_cursor(input: &Path, sizes: &[Size], output: &Path) -> any
                     warn!("skipping non-standard cursor size: {width}");
                     continue;
                 };
-                debug!("Target size: {}", size.0);
 
                 let (hotspot_x, hotspot_y) = image.cursor_hotspot().unwrap_or((0, 0));
                 debug!("Hotspot: ({hotspot_x}, {hotspot_y})");
-                let rgba = image.rgba_data();
 
-                let rgba = RgbaImage::from_raw(width, height, rgba.to_vec())
-                    .with_context(|| format!("failed to load image ({i}, {j})"))?;
+                let rgba = RgbaImage::from_raw(width, height, image.rgba_data().to_vec())
+                    .with_context(|| {
+                        format!("failed to load image from RGBA data ({frame_idx}, {image_idx})")
+                    })?;
 
-                let (chunks, remainder) = image.rgba_data().as_chunks::<4>();
-                debug_assert!(remainder.is_empty());
-                let argb = chunks
-                    .iter()
-                    .map(|&[r, g, b, a]| {
-                        (u32::from(a) << 24)
-                            | (u32::from(r) << 16)
-                            | (u32::from(g) << 8)
-                            | u32::from(b)
-                    })
-                    .collect::<Vec<u32>>();
+                let argb = rgba_to_argb(rgba.as_raw()).collect::<Vec<_>>();
 
-                let xcur_image = xcur::Image::new(
+                images.push(xcur::Image::new(
                     u16::try_from(width).unwrap(),
                     u16::try_from(height).unwrap(),
                     hotspot_x,
                     hotspot_y,
                     delay,
                     argb,
-                )?;
+                )?);
 
-                images.push((size, xcur_image));
-                sizes.retain(|&target| target != size);
+                sizes.remove(&size);
 
-                if largest
-                    .as_ref()
-                    .is_none_or(|&(largest, _)| width > largest.width())
-                {
-                    largest = Some((image, rgba));
+                if largest.as_ref().is_none_or(|largest| size > largest.size) {
+                    largest = Some(Image {
+                        rgba,
+                        size,
+                        hotspot_x,
+                        hotspot_y,
+                    });
                 }
             }
 
             // Iterate over the remaining targets using the largest image to upscale/downscale.
-            if let Some((original, rgba)) = &largest {
+            if let Some(source) = &largest {
                 for target in sizes {
-                    let source_width = original.width();
-                    let source_height = original.height();
-                    let source_size = source_width.max(source_height);
-                    let source_size = u16::try_from(source_size).unwrap();
-
+                    let source_size = u16::from(source.size.0);
                     let target_size = u16::from(target.0);
-                    debug!("Target size: {target_size}");
 
-                    let (source_x, source_y) = original.cursor_hotspot().unwrap_or((0, 0));
-                    let target_x = source_x * target_size / source_size;
-                    let target_y = source_y * target_size / source_size;
+                    let target_x = source.hotspot_x * target_size / source_size;
+                    let target_y = source.hotspot_y * target_size / source_size;
                     debug!("Hotspot: ({target_x}, {target_y})");
 
                     let target_image = imageops::resize(
-                        rgba,
+                        &source.rgba,
                         u32::from(target_size),
                         u32::from(target_size),
                         FilterType::Lanczos3,
                     );
 
-                    let argb = target_image
-                        .as_raw()
-                        .as_chunks::<4>()
-                        .0
-                        .iter()
-                        .map(|&[r, g, b, a]| {
-                            (u32::from(a) << 24)
-                                | (u32::from(r) << 16)
-                                | (u32::from(g) << 8)
-                                | u32::from(b)
-                        })
-                        .collect::<Vec<u32>>();
+                    let argb = rgba_to_argb(target_image.as_raw()).collect::<Vec<_>>();
 
-                    let xcur_image = xcur::Image::new(
+                    images.push(xcur::Image::new(
                         u16::try_from(target_image.width()).unwrap(),
                         u16::try_from(target_image.height()).unwrap(),
                         target_x,
                         target_y,
                         delay,
                         argb,
-                    )?;
-
-                    images.push((target, xcur_image));
+                    )?);
                 }
             }
 
@@ -174,11 +156,7 @@ pub(crate) fn convert_cursor(input: &Path, sizes: &[Size], output: &Path) -> any
         .flatten()
         .collect::<Vec<_>>();
 
-    images.sort_by_key(|&(size, _)| size);
-    let images = images
-        .into_iter()
-        .map(|(_, image)| image)
-        .collect::<Vec<_>>();
+    images.sort_by_key(|image| image.width().max(image.height()));
 
     let xcursor = Xcursor::new(images, vec![]);
 
@@ -190,4 +168,21 @@ pub(crate) fn convert_cursor(input: &Path, sizes: &[Size], output: &Path) -> any
     fs::write(output, &buffer).context("failed to save Xcursor")?;
 
     Ok(())
+}
+
+// fn convert_frame(
+//     frame: &ani::Image,
+//     mut target_sizes: Vec<Size>,
+//     delay: Duration,
+// ) -> anyhow::Result<(Size, xcur::Image)> {
+//     todo!()
+// }
+
+fn rgba_to_argb(bytes: &[u8]) -> impl Iterator<Item = u32> {
+    let (chunks, remainder) = bytes.as_chunks::<4>();
+    debug_assert!(remainder.is_empty());
+
+    chunks.iter().map(|&[r, g, b, a]| {
+        (u32::from(a) << 24) | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)
+    })
 }
