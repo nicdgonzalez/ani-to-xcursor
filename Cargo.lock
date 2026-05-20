@@ -20,7 +20,7 @@ dependencies = [
 
 [[package]]
 name = "ani2xcur"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "ani",
  "anyhow",
@@ -802,6 +802,7 @@ checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
 [[package]]
 name = "xcur"
 version = "0.1.0"
+source = "git+https://github.com/nicdgonzalez/xcur#82614a710a2b3a92fd89bb48f91f3dcd44dfcdc1"
 dependencies = [
  "tracing",
 ]

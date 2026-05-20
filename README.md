@@ -15,16 +15,16 @@ frame order.
 
 Related cursors are grouped into *cursor schemes*. A cursor scheme is typically
 distributed together with an `Install.inf` file, which contains the metadata
-required to register and install the scheme.
+required to install the scheme.
 
-`ani2xcur` utilizes this information to accurately convert each animated cursor
-into the [Xcursor] format and installs the resulting files in the locations
-expected by the X Window System.
+`ani2xcur` uses this information to convert each animated cursor into [Xcursor]
+format and installs the resulting files in the locations expected by the X
+Window System.
 
 While many larger projects now parse INF files to perform bulk cursor
 conversions, this project was the first to introduce that approach.
 
-Originally created to fill that gap, it now focuses on providing an ergonomic
+Originally created to fill the gap, I'm now focusing on providing an ergonomic
 solution: a single command-line interface with intentionally designed options
 and subcommands, optimized for speed and correctness. See
 [Benchmarks](#Benchmarks) for comparisons against similar projects.
@@ -34,7 +34,6 @@ and subcommands, optimized for speed and correctness. See
 | Requirement | Version | Description                                  |
 | :---------- | :------ | :------------------------------------------- |
 | cargo       | 1.94.0  | Build and install the command-line interface |
-| xcursorgen  | 1.0.8   | Xcursor generation backend                   |
 
 Install from GitHub using `cargo`:
 
@@ -99,7 +98,7 @@ Finally, enable the theme using your system's cursor settings. The exact
 process varies by distribution, but most desktop environments provide a
 command-line tool or a graphical settings panel.
 
-Enjoy!
+Enjoy your new cursors!
 
 ### Convert individual ANI files
 
@@ -116,18 +115,6 @@ Enjoy!
 
 If you only want to convert a single ANI file:
 
-> [!TIP]\
-> This will output everything into a dedicated `build` directory like the
-> `build` command does. I would recommend moving your ANI files into a separate
-> directory prior to running this command. (This step won't be necessary in a
-> future update.)
->
-> ```bash
-> mkdir custom-theme
-> mv *.ani ./custom-theme/
-> cd custom-theme
-> ```
-
 ```bash
 ani2xcur convert Default.ani
 ```
@@ -139,47 +126,47 @@ same problem.
 
 | Project       | Version |
 | :------------ | :------ |
-| [ani2xcur]    | 0.1.2   |
+| [ani2xcur]    | 0.1.3   |
 | [ani2xcursor] | 1.5.0   |
 | [win2xcur]    | 0.2.0   |
 
 ```bash
 hyperfine \
     --warmup 15 \
-    --setup 'ani2xcur uninstall || rm -r ./build ./Cursor.toml || true' \
+    --setup 'ani2xcur uninstall || rm -r ./theme ./Cursor.toml || true' \
     'ani2xcur init && ani2xcur build' \
-    --conclude 'rm -r ./build ./Cursor.toml' \
-    'ani2xcursor --size 32,48,64,96 --out ./build .' \
-    --conclude 'rm -r ./build' \
-    --prepare 'mkdir --parents ./build' \
-    'win2xcur ./*.ani --output-dir ./build' \
-    --conclude 'rm -r ./build'
+    --conclude 'rm -r ./theme ./Cursor.toml' \
+    'ani2xcursor --size 32,48,64,96 --out ./theme .' \
+    --conclude 'rm -r ./theme' \
+    --prepare 'mkdir --parents ./theme' \
+    'win2xcur ./*.ani --output-dir ./theme' \
+    --conclude 'rm -r ./theme'
 ```
 
 ```console
-Benchmark 1: win2xcur ./*.ani --output-dir ./build
-  Time (mean ± σ):     296.1 ms ±   7.1 ms    [User: 1479.6 ms, System: 111.3 ms]
-  Range (min … max):   291.5 ms … 314.3 ms    10 runs
- 
-Benchmark 2: ani2xcur init && ani2xcur build
-  Time (mean ± σ):      78.2 ms ±   2.1 ms    [User: 572.5 ms, System: 254.3 ms]
-  Range (min … max):    73.8 ms …  82.7 ms    26 runs
- 
-Benchmark 3: ani2xcursor --size 32,48,64,96 --out ./build .
-  Time (mean ± σ):     284.7 ms ±   8.1 ms    [User: 210.5 ms, System: 65.5 ms]
-  Range (min … max):   273.0 ms … 292.5 ms    10 runs
- 
+Benchmark 1: ani2xcur init && ani2xcur build
+  Time (mean ± σ):      67.8 ms ±   3.1 ms    [User: 337.6 ms, System: 176.5 ms]
+  Range (min … max):    60.8 ms …  73.3 ms    32 runs
+
+Benchmark 2: ani2xcursor --size 32,48,64,96 --out ./theme .
+  Time (mean ± σ):     279.0 ms ±   8.8 ms    [User: 201.9 ms, System: 64.4 ms]
+  Range (min … max):   268.3 ms … 298.7 ms    10 runs
+
+Benchmark 3: win2xcur ./*.ani --output-dir ./theme
+  Time (mean ± σ):     616.8 ms ±   9.7 ms    [User: 1789.6 ms, System: 304.6 ms]
+  Range (min … max):   603.5 ms … 641.0 ms    10 runs
+
 Summary
   ani2xcur init && ani2xcur build ran
-    3.64 ± 0.14 times faster than ani2xcursor --size 32,48,64,96 --out ./build .
-    3.79 ± 0.14 times faster than win2xcur ./*.ani --output-dir ./build
+    4.12 ± 0.23 times faster than ani2xcursor --size 32,48,64,96 --out ./theme .
+    9.10 ± 0.44 times faster than win2xcur ./*.ani --output-dir ./theme
 ```
 
 ## Roadmap
 
 - [x] Automatically scale cursors to standard sizes.
-- [ ] Remove `xcursorgen` dependency.
-- [ ] Remove need for `build` directory for the `convert` subcommand.
+- [x] Remove `xcursorgen` dependency.
+- [x] Remove need for `build` directory for the `convert` subcommand.
 - [ ] Interactive mode to convert individual cursors with Linux remappings.
 - [ ] Graphical User Interface
 
