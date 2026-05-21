@@ -1,3 +1,4 @@
+mod about;
 mod build;
 mod convert;
 mod init;
@@ -30,6 +31,9 @@ pub enum Subcommand {
 
     /// Read contents of an ANI file
     Inspect(inspect::Inspect),
+
+    /// About the author
+    About(about::About),
 }
 
 impl Subcommand {
@@ -41,6 +45,7 @@ impl Subcommand {
             Self::Install(inner) => inner.run(ctx),
             Self::Uninstall(inner) => inner.run(ctx),
             Self::Inspect(inner) => inner.run(ctx),
+            Self::About(inner) => inner.run(ctx),
         }
     }
 }
