@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fs, io};
 
-use ani::Ani;
+use ani::{Ani, Image as Frame};
 use anyhow::Context as _;
 use colored::Colorize as _;
 use image::imageops::FilterType;
 use image::{RgbaImage, imageops};
-use tracing::{debug, warn};
-use xcur::Xcursor;
+use tracing::{debug, debug_span, warn};
+use xcur::{Image as XcursorImage, Xcursor};
 
 use crate::commands::prelude::*;
 use crate::config::Size;
@@ -67,89 +67,15 @@ pub(crate) fn convert_cursor(input: &Path, sizes: &[Size], output: &Path) -> any
         .iter()
         .enumerate()
         .map(|(frame_idx, frame)| {
-            debug!("Frame #{frame_idx}");
-
-            let mut sizes: BTreeSet<_> = sizes.iter().copied().collect();
-            let mut images = Vec::<xcur::Image>::new();
-            let mut largest = None::<Image>;
-
+            let span = debug_span!("frame", frame_idx);
+            let sizes = sizes.iter().copied().collect::<BTreeSet<_>>();
             let delay = rates
                 .get(frame_idx)
                 .map(|&rate| Duration::from_millis(u64::from(rate) * 1000 / 60))
                 .inspect(|delay| debug!("Delay: {delay:?}"))
                 .with_context(|| format!("rate not found at index {frame_idx}"))?;
 
-            for (image_idx, image) in frame.iter().enumerate() {
-                let width = image.width();
-                let height = image.height();
-
-                let Ok(size) = Size::new(width.max(height)) else {
-                    warn!("skipping non-standard cursor size: {width}");
-                    continue;
-                };
-
-                let (hotspot_x, hotspot_y) = image.cursor_hotspot().unwrap_or((0, 0));
-                debug!("Hotspot: ({hotspot_x}, {hotspot_y})");
-
-                let rgba = RgbaImage::from_raw(width, height, image.rgba_data().to_vec())
-                    .with_context(|| {
-                        format!("failed to load image from RGBA data ({frame_idx}, {image_idx})")
-                    })?;
-
-                let argb = rgba_to_argb(rgba.as_raw()).collect::<Vec<_>>();
-
-                images.push(xcur::Image::new(
-                    u16::try_from(width).unwrap(),
-                    u16::try_from(height).unwrap(),
-                    hotspot_x,
-                    hotspot_y,
-                    delay,
-                    argb,
-                )?);
-
-                sizes.remove(&size);
-
-                if largest.as_ref().is_none_or(|largest| size > largest.size) {
-                    largest = Some(Image {
-                        rgba,
-                        size,
-                        hotspot_x,
-                        hotspot_y,
-                    });
-                }
-            }
-
-            // Iterate over the remaining targets using the largest image to upscale/downscale.
-            if let Some(source) = &largest {
-                for target in sizes {
-                    let source_size = u16::from(source.size.0);
-                    let target_size = u16::from(target.0);
-
-                    let target_x = source.hotspot_x * target_size / source_size;
-                    let target_y = source.hotspot_y * target_size / source_size;
-                    debug!("Hotspot: ({target_x}, {target_y})");
-
-                    let target_image = imageops::resize(
-                        &source.rgba,
-                        u32::from(target_size),
-                        u32::from(target_size),
-                        FilterType::Lanczos3,
-                    );
-
-                    let argb = rgba_to_argb(target_image.as_raw()).collect::<Vec<_>>();
-
-                    images.push(xcur::Image::new(
-                        u16::try_from(target_image.width()).unwrap(),
-                        u16::try_from(target_image.height()).unwrap(),
-                        target_x,
-                        target_y,
-                        delay,
-                        argb,
-                    )?);
-                }
-            }
-
-            Ok(images)
+            span.in_scope(move || extract_images(frame, sizes, &delay))
         })
         .collect::<anyhow::Result<Vec<_>>>()?
         .into_iter()
@@ -159,24 +85,67 @@ pub(crate) fn convert_cursor(input: &Path, sizes: &[Size], output: &Path) -> any
     images.sort_by_key(|image| image.width().max(image.height()));
 
     let xcursor = Xcursor::new(images, vec![]);
-
-    let mut buffer = Vec::new();
-    xcursor
-        .write(&mut buffer)
-        .context("failed to create xcursor")?;
-
-    fs::write(output, &buffer).context("failed to save Xcursor")?;
+    save_xcursor(output, &xcursor)?;
 
     Ok(())
 }
 
-// fn convert_frame(
-//     frame: &ani::Image,
-//     mut target_sizes: Vec<Size>,
-//     delay: Duration,
-// ) -> anyhow::Result<(Size, xcur::Image)> {
-//     todo!()
-// }
+fn extract_images(
+    frame: &[Frame],
+    mut targets: BTreeSet<Size>,
+    delay: &Duration,
+) -> anyhow::Result<Vec<XcursorImage>> {
+    let mut images = Vec::<XcursorImage>::new();
+    let mut largest = None::<Image>;
+
+    for image in frame {
+        let width = image.width();
+        let height = image.height();
+        let nominal = width.max(height);
+
+        let Ok(size) = Size::new(nominal) else {
+            warn!("skipping image with non-standard size: {nominal}");
+            continue;
+        };
+
+        let (hotspot_x, hotspot_y) = image.cursor_hotspot().unwrap_or((0, 0));
+        debug!("Hotspot: ({hotspot_x}, {hotspot_y})");
+
+        let rgba = RgbaImage::from_raw(width, height, image.rgba_data().to_vec())
+            .context("failed to load image from RGBA data")?;
+
+        images.push(XcursorImage::new(
+            width.try_into().unwrap(),
+            height.try_into().unwrap(),
+            hotspot_x,
+            hotspot_y,
+            *delay,
+            rgba_to_argb(rgba.as_raw()).collect(),
+        )?);
+
+        targets.remove(&size);
+
+        if largest.as_ref().is_none_or(|largest| size > largest.size) {
+            largest = Some(Image {
+                rgba,
+                size,
+                hotspot_x,
+                hotspot_y,
+            });
+        }
+    }
+
+    // Iterate over the remaining targets using the largest valid image to scale up/down.
+    if let Some(source) = largest {
+        generate_resized_images(&source, &targets, delay).try_for_each(|image| {
+            let image = image?;
+            images.push(image);
+            Ok::<_, anyhow::Error>(())
+        })?;
+    }
+
+    Ok(images)
+}
 
 fn rgba_to_argb(bytes: &[u8]) -> impl Iterator<Item = u32> {
     let (chunks, remainder) = bytes.as_chunks::<4>();
@@ -185,4 +154,49 @@ fn rgba_to_argb(bytes: &[u8]) -> impl Iterator<Item = u32> {
     chunks.iter().map(|&[r, g, b, a]| {
         (u32::from(a) << 24) | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)
     })
+}
+
+fn generate_resized_images(
+    source: &Image,
+    targets: &BTreeSet<Size>,
+    delay: &Duration,
+) -> impl Iterator<Item = anyhow::Result<XcursorImage>> {
+    targets
+        .iter()
+        .map(|target| -> anyhow::Result<XcursorImage> {
+            let source_size = u16::from(source.size.0);
+            let target_size = u16::from(target.0);
+
+            let target_x = source.hotspot_x * target_size / source_size;
+            let target_y = source.hotspot_y * target_size / source_size;
+            debug!("Hotspot: ({target_x}, {target_y})");
+
+            let target_image = imageops::resize(
+                &source.rgba,
+                u32::from(target_size),
+                u32::from(target_size),
+                FilterType::Lanczos3,
+            );
+
+            let argb = rgba_to_argb(target_image.as_raw()).collect::<Vec<_>>();
+
+            Ok(XcursorImage::new(
+                u16::try_from(target_image.width()).unwrap(),
+                u16::try_from(target_image.height()).unwrap(),
+                target_x,
+                target_y,
+                *delay,
+                argb,
+            )?)
+        })
+}
+
+fn save_xcursor(path: &Path, xcursor: &Xcursor) -> anyhow::Result<()> {
+    let mut buffer = Vec::new();
+    xcursor
+        .write(&mut buffer)
+        .context("failed to create xcursor")?;
+
+    fs::write(path, &buffer).context("failed to save Xcursor")?;
+    Ok(())
 }
