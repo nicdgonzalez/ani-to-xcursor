@@ -1,5 +1,6 @@
 mod about;
 mod build;
+mod completions;
 mod convert;
 mod init;
 mod inspect;
@@ -14,11 +15,11 @@ pub trait Run {
 
 #[derive(clap::Subcommand)]
 pub enum Subcommand {
+    /// Show project and author information
+    About(about::About),
+
     /// Generate the Manifest (Cursor.toml) file
     Init(init::Init),
-
-    /// Create a single Xcursor file from an ANI file
-    Convert(convert::Convert),
 
     /// Convert multiple cursors from a setup information file (INF)
     Build(build::Build),
@@ -29,11 +30,14 @@ pub enum Subcommand {
     /// Delete the theme and all of its build artifacts
     Uninstall(uninstall::Uninstall),
 
+    /// Create a single Xcursor file from an ANI file
+    Convert(convert::Convert),
+
     /// Read contents of an ANI file
     Inspect(inspect::Inspect),
 
-    /// About the author
-    About(about::About),
+    /// Generate auto-complete options for your preferred shell
+    Completions(completions::Completions),
 }
 
 impl Subcommand {
@@ -46,6 +50,7 @@ impl Subcommand {
             Self::Uninstall(inner) => inner.run(ctx),
             Self::Inspect(inner) => inner.run(ctx),
             Self::About(inner) => inner.run(ctx),
+            Self::Completions(inner) => inner.run(ctx),
         }
     }
 }
