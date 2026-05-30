@@ -119,6 +119,15 @@ If you only want to convert a single ANI file:
 ani2xcur convert Default.ani
 ```
 
+## Shell auto-complete
+
+For auto-complete when using `ani2xcur`:
+
+```bash
+mkdir --parents "$HOME"/.local/share/bash-completion/completions"
+ani2xcur completions bash > "$HOME"/.local/share/bash-completion/completions/ani2xcur
+```
+
 ## Benchmarks
 
 Benchmarked using [hyperfine] against similar projects on GitHub solving the
