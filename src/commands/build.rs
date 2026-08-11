@@ -1,6 +1,5 @@
 use std::io::Write as _;
 use std::path::Path;
-use std::process::Command;
 use std::{io, thread};
 
 use anyhow::Context as _;
@@ -108,15 +107,5 @@ pub(crate) fn symlink(source: &Path, target: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let status = Command::new("ln")
-        .arg("--symbolic")
-        .args([source, target])
-        .status()
-        .context("failed to execute ln")?;
-
-    match status.code() {
-        Some(0) => Ok(()),
-        Some(code) => Err(anyhow::anyhow!("process failed with exit code: {code}")),
-        None => Err(anyhow::anyhow!("process terminated due to signal")),
-    }
+    std::os::unix::fs::symlink(source, target).context("failed to create symbolic link")
 }
