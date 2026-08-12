@@ -62,7 +62,9 @@ struct Image {
 pub(crate) fn convert_cursor(input: &Path, sizes: &[Size], output: &Path) -> anyhow::Result<()> {
     let ani = Ani::open(input).context("failed to decode ANI file")?;
     let rates = ani.rates_or_default();
-    let mut images = ani
+    let sequence = ani.sequence_or_default();
+    debug!("unique frames: {}", ani.frames().len());
+    let mut frames = ani
         .frames()
         .iter()
         .enumerate()
@@ -82,7 +84,30 @@ pub(crate) fn convert_cursor(input: &Path, sizes: &[Size], output: &Path) -> any
         .flatten()
         .collect::<Vec<_>>();
 
-    images.sort_by_key(|image| image.width().max(image.height()));
+    frames.sort_by_key(|image| image.width().max(image.height()));
+    assert!(frames.len().is_multiple_of(sizes.len()));
+    debug!("frames length: {} (frames * sizes)", frames.len());
+
+    let frames_per_size = frames.len() / sizes.len();
+    let mut images = Vec::<xcur::Image>::with_capacity(sequence.len() * sizes.len());
+
+    for size_index in 0..sizes.len() {
+        let offset = size_index * frames_per_size;
+        let batch = sequence
+            .iter()
+            .map(|&i| {
+                let index = usize::try_from(i).expect("u32 overflowed usize");
+                let index = index + offset;
+
+                frames
+                    .get(index)
+                    .cloned()
+                    .with_context(|| format!("frame not found at index {index}"))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        images.extend(batch);
+    }
 
     let xcursor = Xcursor::new(images, vec![]);
     save_xcursor(output, &xcursor)?;
