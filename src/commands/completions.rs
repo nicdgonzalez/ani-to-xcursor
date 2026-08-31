@@ -12,7 +12,7 @@ pub struct Completions {
 }
 
 impl Run for Completions {
-    fn run(self, _ctx: &mut Context) -> anyhow::Result<()> {
+    fn run(self, _: Context) -> anyhow::Result<()> {
         let mut command = Parser::command();
 
         clap_complete::generate(

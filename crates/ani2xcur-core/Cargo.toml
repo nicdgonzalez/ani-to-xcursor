@@ -1,0 +1,12 @@
+[package]
+name = "ani2xcur-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+inf = { version = "0.1.0", path = "../inf" }
+serde = { version = "1.0.229", features = ["derive"] }
+strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.20"
+toml = "1.1.4"
+tracing = "0.1.44"

@@ -18,7 +18,7 @@ pub struct Inspect {
 }
 
 impl Run for Inspect {
-    fn run(self, _ctx: &mut Context) -> anyhow::Result<()> {
+    fn run(self, _: Context) -> anyhow::Result<()> {
         let mut file = File::open(&self.input).context("failed to reopen ANI file")?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)

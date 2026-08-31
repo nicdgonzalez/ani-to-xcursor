@@ -1,10 +1,18 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
 [package]
 name = "ani2xcur"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 
 [dependencies]
-ani = { git = "https://github.com/nicdgonzalez/ani.git", version = "0.1.2" }
+ani2xcur-core = { path = "./crates/ani2xcur-core" }
+ani = { path = "./crates/ani" }
+inf = { path = "./crates/inf" }
+xcur = { path = "./crates/xcur" }
+
 anyhow = "1.0.100"
 bytesize = "2.3.1"
 clap = { version = "4.5.54", features = ["derive"] }
@@ -15,12 +23,11 @@ clap_complete = "4.6.5"
 colored = "3.0.0"
 dirs = "6.0.0"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-inf = { version = "0.1.1", git = "https://github.com/nicdgonzalez/inf.git" }
 serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.20"
 toml = "0.9.11"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
-xcur = { version = "0.1.0", git = "https://github.com/nicdgonzalez/xcur" }
 
 [profile.release]
 debug = true

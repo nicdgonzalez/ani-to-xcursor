@@ -8,7 +8,7 @@ use crate::commands::prelude::*;
 pub struct About;
 
 impl Run for About {
-    fn run(self, _ctx: &mut Context) -> anyhow::Result<()> {
+    fn run(self, _: Context) -> anyhow::Result<()> {
         writeln!(
             io::stdout(),
             "\
