@@ -3,7 +3,6 @@ use std::{io, slice};
 
 use ani2xcur_core::manifest::{Manifest, THEME_DEFAULT};
 use ani2xcur_core::package::Package;
-use ani2xcur_core::size::Size;
 use ani2xcur_core::{CURSORS_DEFAULT, Cursor};
 use anyhow::{Context as _, bail};
 use inf::{AddRegistryEntry, Entry, Inf, Section, Value};
@@ -15,7 +14,6 @@ pub struct InitializeRequest {
     pub skip_inf: bool,
     pub inf: Option<PathBuf>,
     pub theme: Option<String>,
-    pub sizes: Vec<Size>,
 }
 
 /// Errors that can occur while initializing a package.
@@ -54,11 +52,11 @@ pub fn initialize_package(request: InitializeRequest) -> anyhow::Result<()> {
             .theme
             .unwrap_or_else(|| scheme_name.unwrap_or_else(|| THEME_DEFAULT.to_owned()));
 
-        Manifest::new(theme, request.sizes, cursors)
+        Manifest::new(theme, cursors)
     };
 
-    package
-        .save_manifest(manifest)
+    manifest
+        .save(package.manifest_path())
         .context("failed to save manifest file")?;
 
     Ok(())

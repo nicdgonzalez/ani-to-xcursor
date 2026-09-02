@@ -2,7 +2,6 @@ use std::io;
 use std::io::Write as _;
 use std::path::PathBuf;
 
-use ani2xcur_core::size::Size;
 use anyhow::Context as _;
 use colored::Colorize as _;
 
@@ -18,9 +17,6 @@ pub struct Init {
     /// Path to INF file. Defaults to `./Install.inf`.
     #[arg(long)]
     pub inf: Option<PathBuf>,
-
-    #[arg(long, value_delimiter = ',', default_value = "24,32,48,64,96,128")]
-    pub sizes: Vec<Size>,
 
     /// Overwrite existing Cursor.toml file if it already exists.
     #[arg(long)]
@@ -39,7 +35,6 @@ impl Run for Init {
             skip_inf: self.skip_inf,
             inf: self.inf,
             theme: self.theme,
-            sizes: self.sizes,
         };
 
         initialize_package(request).context("failed to initialize package")?;

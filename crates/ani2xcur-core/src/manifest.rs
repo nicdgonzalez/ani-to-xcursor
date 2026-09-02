@@ -6,7 +6,7 @@ use std::str::FromStr;
 use serde::{Deserialize as _, Deserializer};
 
 use crate::cursor::{CURSORS_DEFAULT, Cursor, TomlCursor};
-use crate::size::{Size, TomlSizes, default_sizes};
+use crate::size::TomlSizes;
 
 /// Generic theme name for when the user doesn't provide one.
 pub const THEME_DEFAULT: &str = "Unnamed Theme";
@@ -14,7 +14,6 @@ pub const THEME_DEFAULT: &str = "Unnamed Theme";
 #[derive(Debug, Clone)]
 pub struct Manifest {
     theme: String,
-    sizes: Vec<Size>,
     cursors: Vec<Cursor>,
 }
 
@@ -33,12 +32,8 @@ pub enum ManifestError {
 impl Manifest {
     /// Creates a new manifest.
     #[must_use]
-    pub const fn new(theme: String, sizes: Vec<Size>, cursors: Vec<Cursor>) -> Self {
-        Self {
-            theme,
-            sizes,
-            cursors,
-        }
+    pub const fn new(theme: String, cursors: Vec<Cursor>) -> Self {
+        Self { theme, cursors }
     }
 
     /// Reads the file at `path` and parses its contents.
@@ -82,6 +77,18 @@ impl Manifest {
             .map(Manifest::from)
     }
 
+    /// Creates a new manifest with the given `theme` from an existing manifest.
+    #[must_use]
+    pub fn with_theme(self, theme: String) -> Self {
+        Self { theme, ..self }
+    }
+
+    /// Creates a new manifest with the given `cursors` from an existing manifest.
+    #[must_use]
+    pub fn with_cursors(self, cursors: Vec<Cursor>) -> Self {
+        Self { cursors, ..self }
+    }
+
     /// Writes the manifest to the file at `path` in TOML format.
     ///
     /// # Errors
@@ -104,12 +111,6 @@ impl Manifest {
         &self.theme
     }
 
-    /// Target name for the cursor theme.
-    #[must_use]
-    pub fn sizes(&self) -> &[Size] {
-        &self.sizes
-    }
-
     /// Cursor mappings.
     #[must_use]
     pub fn cursors(&self) -> &[Cursor] {
@@ -121,7 +122,6 @@ impl Default for Manifest {
     fn default() -> Self {
         Self {
             theme: THEME_DEFAULT.to_owned(),
-            sizes: default_sizes().to_vec(),
             cursors: CURSORS_DEFAULT.to_vec(),
         }
     }
@@ -131,7 +131,6 @@ impl From<TomlManifest> for Manifest {
     fn from(value: TomlManifest) -> Self {
         Self {
             theme: value.theme,
-            sizes: value.sizes.into_inner(),
             cursors: value.cursors.into_iter().map(Cursor::from).collect(),
         }
     }
@@ -142,7 +141,9 @@ pub(crate) struct TomlManifest {
     #[serde(deserialize_with = "non_empty_string")]
     theme: String,
 
-    #[serde(default)]
+    // Plan to remove this in a future version; sizes will be an argument to `build` instead.
+    #[expect(dead_code, reason = "will be removed eventually")]
+    #[serde(default, skip_serializing)]
     sizes: TomlSizes,
 
     #[serde(rename = "cursor", default = "Vec::new")]
@@ -174,7 +175,7 @@ impl From<Manifest> for TomlManifest {
     fn from(value: Manifest) -> Self {
         Self {
             theme: value.theme,
-            sizes: TomlSizes(value.sizes),
+            sizes: TomlSizes(vec![]),
             cursors: value.cursors.into_iter().map(TomlCursor::from).collect(),
         }
     }
@@ -187,7 +188,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_theme() {
+    fn empty_theme_returns_error() {
         let buffer = r#"
         theme = ""
         sizes = [32, 64]
@@ -200,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_sizes() {
+    fn empty_sizes_returns_error() {
         let buffer = r#"
         theme = "My Theme"
         sizes = []
@@ -213,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_cursors() {
+    fn empty_cursors_is_ok() {
         let buffer = r#"
         theme = "My Theme"
         sizes = [32, 64]
@@ -241,5 +242,18 @@ mod tests {
         let error = Manifest::from_reader(reader).unwrap_err();
 
         assert!(matches!(error, ManifestError::Deserialize(_)));
+    }
+
+    #[test]
+    fn missing_sizes_parses_ok() {
+        let buffer = r#"
+        theme = "My Theme"
+        "#;
+
+        let reader = Cursor::new(buffer);
+        let manifest = Manifest::from_reader(reader).unwrap();
+
+        assert_eq!(manifest.theme, "My Theme".to_owned());
+        assert_eq!(manifest.cursors, vec![]);
     }
 }

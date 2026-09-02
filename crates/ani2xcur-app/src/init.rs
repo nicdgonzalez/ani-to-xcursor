@@ -68,23 +68,29 @@ pub fn initialize_package(request: InitializePackageRequest) -> Result<(), Initi
         return Err(InitializePackageError::AlreadyInitialized);
     }
 
-    let manifest = if let Some(path) = request.inf {
+    let mut manifest = if let Some(path) = request.inf {
         let inf = Inf::open(path).map_err(InitializePackageError::OpenInf)?;
-        let (scheme_name, cursors) = parse_inf(&inf).map_err(InitializePackageError::ParseInf)?;
-        let theme = request
-            .theme
-            .unwrap_or_else(|| scheme_name.unwrap_or_else(|| THEME_DEFAULT.to_owned()));
-
-        Manifest::new(theme, request.sizes, cursors)
+        manifest_from_inf(&inf)?
     } else {
         Manifest::default()
     };
+
+    if let Some(theme) = request.theme {
+        manifest = manifest.with_theme(theme);
+    }
 
     manifest
         .save(package.manifest_path())
         .map_err(InitializePackageError::SaveManifest)?;
 
     Ok(())
+}
+
+fn manifest_from_inf(inf: &Inf) -> Result<Manifest, InitializePackageError> {
+    let (scheme_name, cursors) = parse_inf(inf).map_err(InitializePackageError::ParseInf)?;
+    let theme = scheme_name.unwrap_or_else(|| THEME_DEFAULT.to_owned());
+
+    Ok(Manifest::new(theme, cursors))
 }
 
 /// Errors that can occur while extracting cursor scheme information from an INF file.
@@ -212,32 +218,61 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn finds_cursor_scheme_entry() {
-        let reader = Cursor::new(
-            r#"
+    static DEFAULT_INF: &str = r#"
 [Version]
 signature="$CHICAGO$"
 
 [DefaultInstall]
-CopyFiles = Scheme.Cur
+CopyFiles = Scheme.Cur, Scheme.Txt
 AddReg = Scheme.Reg
 
 [DestinationDirs]
 Scheme.Cur = 10,"%CUR_DIR%"
+Scheme.Txt = 10,"%CUR_DIR%"
 
 [Scheme.Reg]
-HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,"%10%\%CUR_DIR%\%pointer%"
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,"%10%\%CUR_DIR%\%pointer%,%10%\%CUR_DIR%\%help%,%10%\%CUR_DIR%\%work%,%10%\%CUR_DIR%\%busy%,%10%\%CUR_DIR%\%cross%,%10%\%CUR_DIR%\%Text%,%10%\%CUR_DIR%\%Hand%,%10%\%CUR_DIR%\%unavailable%,%10%\%CUR_DIR%\%Vert%,%10%\%CUR_DIR%\%Horz%,%10%\%CUR_DIR%\%Dgn1%,%10%\%CUR_DIR%\%Dgn2%,%10%\%CUR_DIR%\%move%,%10%\%CUR_DIR%\%alternate%,%10%\%CUR_DIR%\%link%"
 
 [Scheme.Cur]
-Pointer.ani
+"Pointer.ani"
+"Help.ani"
+"Working.ani"
+"Busy.ani"
+"Crosshair.ani"
+"Text.ani"
+"Hand.ani"
+"Unavailable.ani"
+"Vertical.ani"
+"Horizontal.ani"
+"Diagonal1.ani"
+"Diagonal2.ani"
+"Move.ani"
+"Alternate.ani"
+"Link.ani"
 
 [Strings]
 CUR_DIR = "Cursors\My Cursor V1"
 SCHEME_NAME = "My Cursor V1"
 pointer = "Pointer.ani"
-"#,
-        );
+help = "Help.ani"
+work = "Working.ani"
+busy = "Busy.ani"
+cross = "Crosshair.ani"
+text = "Text.ani"
+hand = "Hand.ani"
+unavailable = "Unavailable.ani"
+vert = "Vertical.ani"
+horz = "Horizontal.ani"
+dgn1 = "Diagonal1.ani"
+dgn2 = "Diagonal2.ani"
+move = "Move.ani"
+alternate = "Alternate.ani"
+link = "Link.ani"
+    "#;
+
+    #[test]
+    fn finds_cursor_scheme_entry() {
+        let reader = Cursor::new(DEFAULT_INF);
         let inf = Inf::from_reader(reader).unwrap();
 
         let entry = get_cursor_scheme_entry(&inf).unwrap();
@@ -245,6 +280,9 @@ pointer = "Pointer.ani"
         assert_eq!(entry.registry_root, "HKCU");
         assert_eq!(entry.subkey, r"Control Panel\Cursors\Schemes");
         assert_eq!(entry.entry_name, "%SCHEME_NAME%");
-        assert_eq!(entry.value, r"%10%\%CUR_DIR%\%pointer%");
+        assert_eq!(
+            entry.value,
+            r"%10%\%CUR_DIR%\%pointer%,%10%\%CUR_DIR%\%help%,%10%\%CUR_DIR%\%work%,%10%\%CUR_DIR%\%busy%,%10%\%CUR_DIR%\%cross%,%10%\%CUR_DIR%\%Text%,%10%\%CUR_DIR%\%Hand%,%10%\%CUR_DIR%\%unavailable%,%10%\%CUR_DIR%\%Vert%,%10%\%CUR_DIR%\%Horz%,%10%\%CUR_DIR%\%Dgn1%,%10%\%CUR_DIR%\%Dgn2%,%10%\%CUR_DIR%\%move%,%10%\%CUR_DIR%\%alternate%,%10%\%CUR_DIR%\%link%"
+        );
     }
 }

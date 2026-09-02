@@ -66,7 +66,6 @@ pub fn install_package(request: InstallPackageRequest) -> Result<String, Install
                 skip_inf: true,
                 inf: None,
                 theme: None,
-                sizes: default_sizes().to_vec(),
             };
 
             initialize_package(request).map_err(InstallPackageError::InitFailed)?;
@@ -84,6 +83,7 @@ pub fn install_package(request: InstallPackageRequest) -> Result<String, Install
     if !theme_exists {
         let request = BuildPackageRequest {
             path: package.path().to_owned(),
+            sizes: default_sizes().to_vec(),
         };
 
         build_package(request).map_err(InstallPackageError::BuildFailed)?;

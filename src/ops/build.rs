@@ -13,6 +13,7 @@ use crate::ops::convert::{ConvertCursorRequest, convert_cursor};
 
 pub struct BuildPackageRequest {
     pub path: PathBuf,
+    pub sizes: Vec<Size>,
 }
 
 pub fn build_package(request: BuildPackageRequest) -> anyhow::Result<()> {
@@ -42,7 +43,7 @@ pub fn build_package(request: BuildPackageRequest) -> anyhow::Result<()> {
                 let span = error_span!("", cursor = ?cursor.kind());
 
                 let package = &package;
-                let sizes = manifest.sizes();
+                let sizes = &request.sizes;
                 let handle = scope.spawn(move || {
                     span.in_scope(move || build_package_handler(cursor, package, sizes))
                 });

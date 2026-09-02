@@ -94,14 +94,6 @@ impl<'de> serde::Deserialize<'de> for Size {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct TomlSizes(pub Vec<Size>);
 
-impl TomlSizes {
-    /// Gives ownership of the stored inner value.
-    #[must_use]
-    pub fn into_inner(self) -> Vec<Size> {
-        self.0
-    }
-}
-
 impl AsRef<[Size]> for TomlSizes {
     fn as_ref(&self) -> &[Size] {
         self.0.as_ref()
