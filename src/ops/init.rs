@@ -1,13 +1,12 @@
 use std::path::PathBuf;
 use std::{io, slice};
 
-use ani2xcur_core::cursor::CURSORS_DEFAULT;
 use ani2xcur_core::manifest::{Manifest, THEME_DEFAULT};
 use ani2xcur_core::package::Package;
 use ani2xcur_core::size::Size;
+use ani2xcur_core::{CURSORS_DEFAULT, Cursor};
 use anyhow::{Context as _, bail};
-use inf::{Entry, Inf, Section, Value};
-use tracing::error;
+use inf::{AddRegistryEntry, Entry, Inf, Section, Value};
 
 /// Request to initialize a package.
 pub struct InitializeRequest {
@@ -45,8 +44,16 @@ pub fn initialize_package(request: InitializeRequest) -> anyhow::Result<()> {
 
         let inf = Inf::open(path).context("failed to parse INF file")?;
 
-        create_manifest_from_inf(&inf, request.theme, request.sizes)
-            .context("failed to create config")?
+        let Extracted {
+            scheme_name,
+            cursors,
+        } = from_inf(&inf).context("failed to extract required data from INF")?;
+
+        let theme = request
+            .theme
+            .unwrap_or_else(|| scheme_name.unwrap_or_else(|| THEME_DEFAULT.to_owned()));
+
+        Manifest::new(theme, request.sizes, cursors)
     };
 
     package
@@ -56,127 +63,189 @@ pub fn initialize_package(request: InitializeRequest) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn create_manifest_from_inf(
-    inf: &Inf,
-    theme_override: Option<String>,
-    sizes: Vec<Size>,
-) -> anyhow::Result<Manifest> {
-    let cursor_scheme_entry = get_cursor_scheme_entry(inf)?;
-    let strings = inf
-        .get("Strings")
-        .context("section 'Strings' not found in INF")?;
+#[derive(Debug, thiserror::Error)]
+pub enum FromInfError {
+    #[error("section 'DefaultInstall' not found")]
+    MissingDefaultInstall,
 
-    // TODO: Remove when `get_scheme_name` propagates the error - I don't like the "silent" failure
-    let theme = theme_override.unwrap_or_else(|| {
-        get_scheme_name(cursor_scheme_entry, strings)
-            .inspect_err(|err| error!("failed to resolve scheme name: {err}"))
-            .unwrap_or_else(|_| THEME_DEFAULT.to_owned())
-    });
+    #[error("entry 'AddReg' not found")]
+    MissingAddReg,
 
-    let cursors = get_cursor_paths(cursor_scheme_entry, strings)
-        .context("failed to get cursor paths")?
+    #[error("entry modifying the cursor scheme registry not found")]
+    MissingSchemesEntry,
+
+    #[error("invalid add registry entry")]
+    InvalidAddRegEntry(#[source] inf::InvalidAddRegistryEntry),
+
+    #[error("section '{name}' not found")]
+    MissingSection { name: String },
+
+    #[error("failed to expand vars")]
+    ExpandVars(#[source] inf::util::ExpandVarsError),
+}
+
+struct Extracted {
+    scheme_name: Option<String>,
+    cursors: Vec<Cursor>,
+}
+
+fn from_inf(inf: &Inf) -> Result<Extracted, FromInfError> {
+    let entry = get_cursor_scheme_entry(inf)?;
+    let strings = inf.strings();
+
+    let theme = if entry.value_entry_name.is_empty() {
+        None
+    } else {
+        let theme = inf::util::expand_vars(entry.value_entry_name, &strings)
+            .map_err(FromInfError::ExpandVars)?;
+
+        Some(theme)
+    };
+
+    let cursors = get_paths(&entry, &strings)?
         .into_iter()
         .enumerate()
-        .map(|(i, path)| CURSORS_DEFAULT[i].clone().with_path(path))
-        .collect();
+        .map(|(index, path)| CURSORS_DEFAULT[index].clone().with_path(path))
+        .collect::<Vec<Cursor>>();
 
-    Ok(Manifest::new(theme, sizes, cursors))
+    Ok(Extracted {
+        scheme_name: theme,
+        cursors,
+    })
 }
 
-fn get_cursor_scheme_entry(inf: &Inf) -> anyhow::Result<&[String]> {
-    // The `DefaultInstall` section is required in all INF files;
-    // it is the main entry point to the setup file.
+fn get_cursor_scheme_entry(inf: &Inf) -> Result<AddRegistryEntry<'_>, FromInfError> {
+    let add_registry_sections = get_add_registry_sections(inf)?;
+
+    for section_name in add_registry_sections {
+        let section = inf
+            .get(section_name)
+            .ok_or_else(|| FromInfError::MissingSection {
+                name: section_name.clone(),
+            })?;
+
+        for entry in section.as_add_registry().entries() {
+            let entry = entry.map_err(FromInfError::InvalidAddRegEntry)?;
+
+            if entry.subkey == r"Control Panel\Cursors\Schemes" {
+                return Ok(entry);
+            }
+        }
+    }
+
+    Err(FromInfError::MissingSchemesEntry)
+}
+
+fn get_add_registry_sections(inf: &Inf) -> Result<&[String], FromInfError> {
     let default_install = inf
         .get("DefaultInstall")
-        .context("section 'DefaultInstall' not found in INF")?;
+        .ok_or(FromInfError::MissingDefaultInstall)?;
 
-    // The 'AddReg' entry tells us which section(s) define our cursors.
-    let values = get_addreg_values(default_install)
-        .context("entry 'AddReg' not found in 'DefaultInstall' section")?;
-
-    values
-        .iter()
-        .find_map(|name| {
-            let section = inf.get(name)?;
-
-            section.entries().iter().find_map(|entry| {
-                let Entry::Value(Value::List(values)) = entry else {
-                    return None;
-                };
-
-                values
-                    .get(1)
-                    .is_some_and(|subkey| subkey == r"Control Panel\Cursors\Schemes")
-                    .then_some(values.as_ref())
-            })
-        })
-        .context("cursor scheme entry not found")
-}
-
-/// Returns the values of the `AddReg` directive given a `DefaultInstall` section.
-///
-/// An `AddReg` directive is used to modify or create registry information.
-/// Cursor schemes are managed in the registry `Control Panel\Cursors\Schemes`.
-///
-/// This function returns `None` if the section does not contain an `"AddReg"` entry.
-fn get_addreg_values(default_install: &Section) -> Option<&[String]> {
     default_install
         .entries()
         .iter()
         .find_map(|entry| match entry {
-            Entry::Item(key, v) if key.as_str() == "AddReg" => match v {
+            Entry::Item(k, v) if k.as_str() == "AddReg" => match v {
                 Value::Raw(value) => Some(slice::from_ref(value)),
                 Value::List(values) => Some(values.as_slice()),
             },
             _ => None,
         })
+        .ok_or(FromInfError::MissingAddReg)
 }
 
-fn get_cursor_paths(
-    cursor_scheme_entry: &[String],
+fn get_paths(
+    entry: &AddRegistryEntry<'_>,
     strings: &Section,
-) -> anyhow::Result<Vec<PathBuf>> {
-    let value = cursor_scheme_entry
-        .get(4)
-        .context("missing value for cursor paths")?;
+) -> Result<Vec<PathBuf>, FromInfError> {
+    entry
+        .value
+        .split(',')
+        .map(|s| -> Result<_, FromInfError> {
+            let path = s
+                .split('\\')
+                .skip(2)
+                .map(|v| inf::util::expand_vars(v, strings).map_err(FromInfError::ExpandVars))
+                .collect::<Result<Vec<_>, FromInfError>>()?
+                .into_iter()
+                .collect::<PathBuf>();
 
-    let paths = value
-        .split_terminator(',')
-        .map(|v| -> anyhow::Result<_> {
-            // `str::split` always returns a value, even if it's just the original string.
-            //
-            // TODO: (Delete this when we are no longer assuming the final component is the path to
-            // the cursor) - Figure out how to strip the unnecessary parts of the path to leave
-            // only the path to the file name.
-            let file_name = v.split('\\').next_back().unwrap();
-
-            inf::util::expand_vars(file_name, strings)
-                .context("failed to expand cursor path value")
-                .map(PathBuf::from)
-
-            // I suspect we can strip the first and second components (`Cursors`
-            // and `<Scheme Name>`) and leave the rest as the path to the cursor.
-            //
-            // ```
-            // let value = inf::util::expand_vars(v, strings).context("failed to expand cursor path")?;
-            // let path = value.split_terminator('\\').skip(2).collect::<PathBuf>();
-            // Ok(path)
-            // ```
-            //
-            // If I can confirm whether the first two components are mandatory, I can replace with
-            // the code above.
+            Ok(path)
         })
-        .collect::<anyhow::Result<Vec<PathBuf>>>()?;
-
-    Ok(paths)
+        .collect()
 }
 
-fn get_scheme_name(cursor_scheme_entry: &[String], strings: &Section) -> anyhow::Result<String> {
-    let value = cursor_scheme_entry
-        .get(2)
-        .context("missing value for scheme name")?;
-    let scheme_name =
-        inf::util::expand_vars(value, strings).context("failed to expand scheme name")?;
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
 
-    Ok(scheme_name)
+    use super::*;
+
+    static INF: &str = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+CopyFiles = Scheme.Cur, Scheme.Txt
+AddReg = Scheme.Reg
+
+[DestinationDirs]
+Scheme.Cur = 10,"%CUR_DIR%"
+Scheme.Txt = 10,"%CUR_DIR%"
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,"%10%\%CUR_DIR%\%pointer%,%10%\%CUR_DIR%\%help%,%10%\%CUR_DIR%\%work%,%10%\%CUR_DIR%\%busy%,%10%\%CUR_DIR%\%cross%,%10%\%CUR_DIR%\%Text%,%10%\%CUR_DIR%\%Hand%,%10%\%CUR_DIR%\%unavailable%,%10%\%CUR_DIR%\%Vert%,%10%\%CUR_DIR%\%Horz%,%10%\%CUR_DIR%\%Dgn1%,%10%\%CUR_DIR%\%Dgn2%,%10%\%CUR_DIR%\%move%,%10%\%CUR_DIR%\%alternate%,%10%\%CUR_DIR%\%link%"
+
+[Scheme.Cur]
+Pointer.ani
+Help.ani
+Working.ani
+Busy.ani
+Crosshair.ani
+Text.ani
+Hand.ani
+Unavailable.ani
+Vertical.ani
+Horizontal.ani
+Diagonal1.ani
+Diagonal2.ani
+Move.ani
+Alternate.ani
+Link.ani
+
+[Strings]
+CUR_DIR = "Cursors\My Cursor V1"
+SCHEME_NAME = "My Cursor V1"
+pointer = "Pointer.ani"
+help = "Help.ani"
+work = "Working.ani"
+busy = "Busy.ani"
+cross = "Crosshair.ani"
+text = "Text.ani"
+hand = "Hand.ani"
+unavailable = "Unavailable.ani"
+vert = "Vertical.ani"
+horz = "Horizontal.ani"
+dgn1 = "Diagonal1.ani"
+dgn2 = "Diagonal2.ani"
+move = "Move.ani"
+alternate = "Alternate.ani"
+link = "Link.ani"
+"#;
+
+    #[test]
+    fn from_inf() {
+        let reader = Cursor::new(INF);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let e = get_cursor_scheme_entry(&inf).unwrap();
+
+        assert_eq!(e.registry_root, "HKCU");
+        assert_eq!(e.subkey, r"Control Panel\Cursors\Schemes");
+        assert_eq!(e.value_entry_name, "%SCHEME_NAME%");
+        assert_eq!(
+            e.value,
+            r"%10%\%CUR_DIR%\%pointer%,%10%\%CUR_DIR%\%help%,%10%\%CUR_DIR%\%work%,%10%\%CUR_DIR%\%busy%,%10%\%CUR_DIR%\%cross%,%10%\%CUR_DIR%\%Text%,%10%\%CUR_DIR%\%Hand%,%10%\%CUR_DIR%\%unavailable%,%10%\%CUR_DIR%\%Vert%,%10%\%CUR_DIR%\%Horz%,%10%\%CUR_DIR%\%Dgn1%,%10%\%CUR_DIR%\%Dgn2%,%10%\%CUR_DIR%\%move%,%10%\%CUR_DIR%\%alternate%,%10%\%CUR_DIR%\%link%"
+        );
+    }
 }

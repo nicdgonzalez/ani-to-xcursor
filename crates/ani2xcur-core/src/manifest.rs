@@ -82,6 +82,21 @@ impl Manifest {
             .map(Manifest::from)
     }
 
+    #[must_use]
+    pub fn with_theme(self, theme: String) -> Self {
+        Self { theme, ..self }
+    }
+
+    #[must_use]
+    pub fn with_sizes(self, sizes: Vec<Size>) -> Self {
+        Self { sizes, ..self }
+    }
+
+    #[must_use]
+    pub fn with_cursors(self, cursors: Vec<Cursor>) -> Self {
+        Self { cursors, ..self }
+    }
+
     /// Target name for the cursor theme.
     #[must_use]
     pub fn theme(&self) -> &str {

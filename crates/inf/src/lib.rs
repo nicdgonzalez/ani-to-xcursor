@@ -7,19 +7,19 @@
     clippy::pedantic
 )]
 
-mod error;
-mod parser;
-mod section;
-pub mod util;
-
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
 pub use error::ParseError;
-pub use section::{Entry, Section, Value};
+pub use section::{AddRegistry, AddRegistryEntry, Entry, InvalidAddRegistryEntry, Section, Value};
 
 use crate::parser::Parser;
+
+mod error;
+mod parser;
+mod section;
+pub mod util;
 
 /// The Byte Order Mark (BOM) is used to signal the endianness of an encoding.
 /// The order `FF FE` strongly suggests that the data is encoded using little-endian byte order.
@@ -98,8 +98,10 @@ impl Inf {
     }
 
     #[must_use]
-    pub fn strings(&self) -> Option<&Section> {
+    pub fn strings(&self) -> Section {
         self.get("Strings")
+            .cloned()
+            .unwrap_or_else(|| Section::new("Strings".to_owned(), vec![]))
     }
 }
 

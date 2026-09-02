@@ -19,7 +19,7 @@ pub struct Init {
     #[arg(long)]
     pub inf: Option<PathBuf>,
 
-    #[arg(long, value_delimiter = ',', default_value = "32,48,64,96")]
+    #[arg(long, value_delimiter = ',', default_value = "24,32,48,64,96,128")]
     pub sizes: Vec<Size>,
 
     /// Overwrite existing Cursor.toml file if it already exists.

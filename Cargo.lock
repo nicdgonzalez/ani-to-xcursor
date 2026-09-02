@@ -338,6 +338,9 @@ dependencies = [
 [[package]]
 name = "inf"
 version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "is_terminal_polyfill"
