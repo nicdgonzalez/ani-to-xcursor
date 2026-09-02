@@ -1,7 +1,7 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
-use crate::error::ParseError;
+use crate::error::InfError;
 use crate::section::{Entry, Section};
 
 /// Represents an on-going parse.
@@ -30,7 +30,7 @@ impl Parser<'_> {
     // actually is.
     //
     // TODO: Prefer moving `sections` into caller and use as a helper to extract the sections.
-    pub fn into_sections(mut self) -> Result<Vec<Section>, ParseError> {
+    pub fn into_sections(mut self) -> Result<Vec<Section>, InfError> {
         let mut sections = Vec::<Section>::with_capacity(16);
 
         while let Some(c) = self.chars.next() {
@@ -50,7 +50,7 @@ impl Parser<'_> {
     }
 
     /// Read each line until the next section or end of file.
-    fn parse_section(&mut self, sections: &mut Vec<Section>) -> Result<(), ParseError> {
+    fn parse_section(&mut self, sections: &mut Vec<Section>) -> Result<(), InfError> {
         let section_name = self.parse_section_name()?;
 
         // Duplicate section names are allowed; the specification states we should merge their entries.
@@ -77,7 +77,7 @@ impl Parser<'_> {
     }
 
     /// Read the line containing the section name.
-    fn parse_section_name(&mut self) -> Result<String, ParseError> {
+    fn parse_section_name(&mut self) -> Result<String, InfError> {
         let section_name = self
             .chars
             .by_ref()
@@ -85,9 +85,9 @@ impl Parser<'_> {
             .collect::<String>();
 
         if section_name.is_empty() {
-            return Err(ParseError::SectionNameEmpty);
+            return Err(InfError::SectionNameEmpty);
         } else if section_name.len() > 255 {
-            return Err(ParseError::SectionNameTooLong);
+            return Err(InfError::SectionNameTooLong);
         }
 
         // Strip excess whitespace and inline comments; break the loop after consuming the newline.
@@ -101,7 +101,7 @@ impl Parser<'_> {
                 c if c.is_ascii_whitespace() => {
                     assert_ne!(c, '\n', r"\n should have been handled separately");
                 }
-                c => return Err(ParseError::UnexpectedCharacter { c }),
+                c => return Err(InfError::UnexpectedCharacter { c }),
             }
         }
 
@@ -109,7 +109,7 @@ impl Parser<'_> {
     }
 
     /// Read the next entry while flattening Line Continuators (\) and stripping inline comments.
-    fn read_next_entry(&mut self) -> Result<Option<String>, ParseError> {
+    fn read_next_entry(&mut self) -> Result<Option<String>, InfError> {
         let mut line = String::with_capacity(4096);
         let mut within_quotes = false;
 
@@ -134,7 +134,7 @@ impl Parser<'_> {
                 .trim_end();
 
             if within_quotes {
-                return Err(ParseError::UnterminatedString);
+                return Err(InfError::UnterminatedString);
             }
 
             // Trim inline comments
@@ -150,7 +150,7 @@ impl Parser<'_> {
             }
 
             if within_quotes {
-                return Err(ParseError::UnterminatedString);
+                return Err(InfError::UnterminatedString);
             }
 
             // If the line ends with a Line Continuator, strip it and continue to next line.
@@ -167,7 +167,7 @@ impl Parser<'_> {
     }
 }
 
-fn parse_section_entry(line: &str) -> Result<Entry, ParseError> {
+fn parse_section_entry(line: &str) -> Result<Entry, InfError> {
     assert!(!line.is_empty());
     assert!(!line.ends_with('\\'));
     assert!(!line.contains('\r'));
@@ -220,12 +220,12 @@ fn parse_section_entry(line: &str) -> Result<Entry, ParseError> {
     })
 }
 
-fn normalize_value(mut value: &str) -> Result<String, ParseError> {
+fn normalize_value(mut value: &str) -> Result<String, InfError> {
     value = value.trim();
     value = match (value.starts_with('"'), value.ends_with('"')) {
         (true, true) => &value[1..value.len() - 1],
         (false, false) => value,
-        _ => return Err(ParseError::UnterminatedString),
+        _ => return Err(InfError::UnterminatedString),
     };
     let value = value.replace("\"\"", "\"").replace("\\\\", "\\");
 

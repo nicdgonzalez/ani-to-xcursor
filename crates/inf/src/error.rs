@@ -1,7 +1,7 @@
 use std::{error, fmt, io};
 
 #[derive(Debug)]
-pub enum ParseError {
+pub enum InfError {
     ReadFailure { source: io::Error },
     SectionNameEmpty,
     SectionNameTooLong,
@@ -9,7 +9,7 @@ pub enum ParseError {
     UnterminatedString,
 }
 
-impl error::Error for ParseError {
+impl error::Error for InfError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
             Self::ReadFailure { ref source } => Some(source),
@@ -21,7 +21,7 @@ impl error::Error for ParseError {
     }
 }
 
-impl fmt::Display for ParseError {
+impl fmt::Display for InfError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Self::ReadFailure { source: _ } => "failed to read data".fmt(f),

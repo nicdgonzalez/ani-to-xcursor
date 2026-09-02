@@ -65,6 +65,7 @@ impl Package {
         Manifest::open(self.manifest_path())
     }
 
+    #[deprecated]
     #[expect(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn save_manifest(&self, manifest: Manifest) -> io::Result<()> {
         let value = TomlManifest::from(manifest);

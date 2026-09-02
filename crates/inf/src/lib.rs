@@ -11,7 +11,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-pub use error::ParseError;
+pub use error::InfError as ParseError;
 pub use section::{AddRegistry, AddRegistryEntry, Entry, InvalidAddRegistryEntry, Section, Value};
 
 use crate::parser::Parser;

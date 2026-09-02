@@ -18,6 +18,7 @@ pub struct InitializeRequest {
     pub sizes: Vec<Size>,
 }
 
+/// Errors that can occur while initializing a package.
 #[derive(Debug, thiserror::Error)]
 pub enum InitializeError {
     #[error("failed to check if package is already initialized")]
@@ -29,7 +30,7 @@ pub fn initialize_package(request: InitializeRequest) -> anyhow::Result<()> {
 
     let is_initialized = package
         .is_initialized()
-        .context("failed to check if package is already initialized")?;
+        .map_err(InitializeError::CheckPackageInitialized)?;
 
     if is_initialized && !request.overwrite {
         bail!("Cursor.toml file already exists. Use --overwrite to replace the existing file");
@@ -93,11 +94,11 @@ fn from_inf(inf: &Inf) -> Result<Extracted, FromInfError> {
     let entry = get_cursor_scheme_entry(inf)?;
     let strings = inf.strings();
 
-    let theme = if entry.value_entry_name.is_empty() {
+    let theme = if entry.entry_name.is_empty() {
         None
     } else {
-        let theme = inf::util::expand_vars(entry.value_entry_name, &strings)
-            .map_err(FromInfError::ExpandVars)?;
+        let theme =
+            inf::util::expand_vars(entry.entry_name, &strings).map_err(FromInfError::ExpandVars)?;
 
         Some(theme)
     };
@@ -124,7 +125,7 @@ fn get_cursor_scheme_entry(inf: &Inf) -> Result<AddRegistryEntry<'_>, FromInfErr
                 name: section_name.clone(),
             })?;
 
-        for entry in section.as_add_registry().entries() {
+        for entry in section.as_add_registry_section().entries() {
             let entry = entry.map_err(FromInfError::InvalidAddRegEntry)?;
 
             if entry.subkey == r"Control Panel\Cursors\Schemes" {
@@ -242,7 +243,7 @@ link = "Link.ani"
 
         assert_eq!(e.registry_root, "HKCU");
         assert_eq!(e.subkey, r"Control Panel\Cursors\Schemes");
-        assert_eq!(e.value_entry_name, "%SCHEME_NAME%");
+        assert_eq!(e.entry_name, "%SCHEME_NAME%");
         assert_eq!(
             e.value,
             r"%10%\%CUR_DIR%\%pointer%,%10%\%CUR_DIR%\%help%,%10%\%CUR_DIR%\%work%,%10%\%CUR_DIR%\%busy%,%10%\%CUR_DIR%\%cross%,%10%\%CUR_DIR%\%Text%,%10%\%CUR_DIR%\%Hand%,%10%\%CUR_DIR%\%unavailable%,%10%\%CUR_DIR%\%Vert%,%10%\%CUR_DIR%\%Horz%,%10%\%CUR_DIR%\%Dgn1%,%10%\%CUR_DIR%\%Dgn2%,%10%\%CUR_DIR%\%move%,%10%\%CUR_DIR%\%alternate%,%10%\%CUR_DIR%\%link%"

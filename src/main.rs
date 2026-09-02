@@ -18,7 +18,6 @@ use colored::Colorize as _;
 use commands::Parser;
 
 mod commands;
-mod manifest_from_inf;
 mod ops;
 
 fn main() -> ExitCode {

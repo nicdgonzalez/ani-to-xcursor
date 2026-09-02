@@ -1,0 +1,250 @@
+use std::path::PathBuf;
+use std::{io, slice};
+
+use ani2xcur_core::{CURSORS_DEFAULT, Cursor, Manifest, Package, Size, THEME_DEFAULT};
+use inf::util::expand_vars;
+use inf::{AddRegistryEntry, Entry, Inf, Section, Value};
+
+pub struct InitializePackageRequest {
+    /// Path to package's target root directory.
+    pub path: PathBuf,
+    /// Whether to overwrite the existing manifest if it exists.
+    pub overwrite: bool,
+    /// Path to a Cursor Scheme's setup information (INF) file.
+    pub inf: Option<PathBuf>,
+    /// Theme name that overrides what may be in the INF file.
+    pub theme: Option<String>,
+    /// Target cursor sizes to generate.
+    pub sizes: Vec<Size>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum InitializePackageError {
+    // Failed to check if the package is already initialized (e.g., insufficient permissions).
+    #[error("failed to check if package is already initialized")]
+    CheckPackageInitialized(#[source] io::Error),
+
+    /// Package is already initialized.
+    #[error("package is already initialized")]
+    AlreadyInitialized,
+
+    /// Failed to open the INF file.
+    #[error("failed to open INF file")]
+    OpenInf(#[source] inf::ParseError),
+
+    /// Failed to extract cursor information from the INF file.
+    #[error("failed to parse INF file")]
+    ParseInf(#[source] ParseInfError),
+
+    /// Failed to save manifest file.
+    #[error("failed to save manifest file")]
+    SaveManifest(#[source] io::Error),
+}
+
+/// Initialized a new package at the given [`InitializePackageRequest::path`].
+///
+/// A package is considered initialized if it contains a package manifest. This function extracts
+/// information from the existing INF file to create the manifest, or generates a generic manifest
+/// if no INF file is provided.
+///
+/// # Errors
+///
+/// Returns an error if:
+///
+/// - Unable to check if package is already initialized
+/// - Package is already initialized and [`InitializePackageRequest::overwrite`] is `false`
+/// - Failed to deserialize INF file
+/// - INF file is syntactically valid, but there is an error evaluating it
+/// - Failed to save package manifest
+pub fn initialize_package(request: InitializePackageRequest) -> Result<(), InitializePackageError> {
+    let package = Package::new(request.path);
+
+    let is_initialized = package
+        .is_initialized()
+        .map_err(InitializePackageError::CheckPackageInitialized)?;
+
+    if is_initialized && !request.overwrite {
+        debug_assert!(package.manifest_path().try_exists().unwrap_or(false));
+        return Err(InitializePackageError::AlreadyInitialized);
+    }
+
+    let manifest = if let Some(path) = request.inf {
+        let inf = Inf::open(path).map_err(InitializePackageError::OpenInf)?;
+        let (scheme_name, cursors) = parse_inf(&inf).map_err(InitializePackageError::ParseInf)?;
+        let theme = request
+            .theme
+            .unwrap_or_else(|| scheme_name.unwrap_or_else(|| THEME_DEFAULT.to_owned()));
+
+        Manifest::new(theme, request.sizes, cursors)
+    } else {
+        Manifest::default()
+    };
+
+    manifest
+        .save(package.manifest_path())
+        .map_err(InitializePackageError::SaveManifest)?;
+
+    Ok(())
+}
+
+/// Errors that can occur while extracting cursor scheme information from an INF file.
+#[derive(Debug, thiserror::Error)]
+pub enum ParseInfError {
+    /// `DefaultInstall` section not found.
+    #[error("section 'DefaultInstall' not found")]
+    DefaultInstallNotFound,
+
+    /// `AddReg` entry not found.
+    #[error("entry 'AddReg' not found")]
+    AddRegDirectiveNotFound,
+
+    /// Cursor Schemes entry not found in `AddReg`-named section.
+    #[error("entry modifying the cursor schemes registry not found")]
+    CursorSchemesEntryNotFound,
+
+    /// Section not found.
+    #[error("section not found: {name}")]
+    SectionNotFound { name: String },
+
+    /// Entry does not follow the `AddReg` section format.
+    ///
+    /// <https://learn.microsoft.com/en-us/windows-hardware/drivers/install/inf-addreg-directive>
+    #[error("invalid entry")]
+    InvalidEntry(#[source] inf::InvalidAddRegistryEntry),
+
+    /// Failed to expand variable.
+    #[error("failed to expand variables")]
+    ExpandVars(#[source] inf::util::ExpandVarsError),
+}
+
+/// Extracts relevant cursor scheme information from `inf`.
+fn parse_inf(inf: &Inf) -> Result<(Option<String>, Vec<Cursor>), ParseInfError> {
+    let entry = get_cursor_scheme_entry(inf)?;
+    let strings = inf.strings();
+
+    let theme = if entry.entry_name.is_empty() {
+        None
+    } else {
+        let theme = expand_vars(entry.entry_name, &strings).map_err(ParseInfError::ExpandVars)?;
+        Some(theme)
+    };
+
+    let cursors = split_value_into_path_bufs(entry.value, &strings)?
+        .into_iter()
+        .enumerate()
+        .map(|(i, path)| CURSORS_DEFAULT[i].clone().with_path(path))
+        .collect::<Vec<Cursor>>();
+
+    Ok((theme, cursors))
+}
+
+/// Returns the entry that modifies the Cursor Scheme registry.
+fn get_cursor_scheme_entry(inf: &Inf) -> Result<AddRegistryEntry<'_>, ParseInfError> {
+    // `DefaultInstall` is the main entry point to a setup information (INF) file.
+    let default_install = inf
+        .get("DefaultInstall")
+        .ok_or(ParseInfError::DefaultInstallNotFound)?;
+
+    // The `AddReg` directive lists the names of sections that modify the Windows registry.
+    let section_names = find_addreg_entry(default_install)
+        .map(|v| match v {
+            Value::Raw(value) => slice::from_ref(value),
+            Value::List(values) => values.as_slice(),
+        })
+        .ok_or(ParseInfError::AddRegDirectiveNotFound)?;
+
+    for section_name in section_names {
+        let section = inf
+            .get(section_name)
+            .ok_or_else(|| ParseInfError::SectionNotFound {
+                name: section_name.to_owned(),
+            })?;
+
+        for entry in section.as_add_registry_section().entries() {
+            let entry = entry.map_err(ParseInfError::InvalidEntry)?;
+
+            if is_cursor_scheme_entry(entry) {
+                return Ok(entry);
+            }
+        }
+    }
+
+    Err(ParseInfError::CursorSchemesEntryNotFound)
+}
+
+/// Searches for an item entry whose key matches `AddReg` and returns its value.
+fn find_addreg_entry(section: &Section) -> Option<&Value> {
+    section.entries().iter().find_map(|e| match e {
+        Entry::Item(k, v) if k.as_str() == "AddReg" => Some(v),
+        _ => None,
+    })
+}
+
+/// Checks whether an entry modifies the Cursor Schemes registry.
+fn is_cursor_scheme_entry(entry: AddRegistryEntry<'_>) -> bool {
+    entry.subkey == r"Control Panel\Cursors\Schemes"
+}
+
+/// Splits and expands the variables in the Cursor Scheme entry's `value` field into [`PathBuf`]s.
+fn split_value_into_path_bufs(
+    value: &str,
+    strings: &Section,
+) -> Result<Vec<PathBuf>, ParseInfError> {
+    value
+        .split(',')
+        .map(|s| -> Result<_, ParseInfError> {
+            let path = s
+                .split('\\')
+                .skip(2)
+                .map(|v| inf::util::expand_vars(v, strings).map_err(ParseInfError::ExpandVars))
+                .collect::<Result<Vec<_>, ParseInfError>>()?
+                .into_iter()
+                .collect::<PathBuf>();
+
+            Ok(path)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    #[test]
+    fn finds_cursor_scheme_entry() {
+        let reader = Cursor::new(
+            r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+CopyFiles = Scheme.Cur
+AddReg = Scheme.Reg
+
+[DestinationDirs]
+Scheme.Cur = 10,"%CUR_DIR%"
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,"%10%\%CUR_DIR%\%pointer%"
+
+[Scheme.Cur]
+Pointer.ani
+
+[Strings]
+CUR_DIR = "Cursors\My Cursor V1"
+SCHEME_NAME = "My Cursor V1"
+pointer = "Pointer.ani"
+"#,
+        );
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let entry = get_cursor_scheme_entry(&inf).unwrap();
+
+        assert_eq!(entry.registry_root, "HKCU");
+        assert_eq!(entry.subkey, r"Control Panel\Cursors\Schemes");
+        assert_eq!(entry.entry_name, "%SCHEME_NAME%");
+        assert_eq!(entry.value, r"%10%\%CUR_DIR%\%pointer%");
+    }
+}

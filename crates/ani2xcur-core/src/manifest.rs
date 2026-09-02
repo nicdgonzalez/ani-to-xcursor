@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
 use std::str::FromStr;
@@ -27,7 +27,7 @@ pub enum ManifestError {
     Read(#[source] io::Error),
 
     #[error("failed to deserialize buffer")]
-    Parse(#[source] toml::de::Error),
+    Deserialize(#[source] toml::de::Error),
 }
 
 impl Manifest {
@@ -78,23 +78,24 @@ impl Manifest {
 
         buffer
             .parse::<TomlManifest>()
-            .map_err(ManifestError::Parse)
+            .map_err(ManifestError::Deserialize)
             .map(Manifest::from)
     }
 
-    #[must_use]
-    pub fn with_theme(self, theme: String) -> Self {
-        Self { theme, ..self }
-    }
-
-    #[must_use]
-    pub fn with_sizes(self, sizes: Vec<Size>) -> Self {
-        Self { sizes, ..self }
-    }
-
-    #[must_use]
-    pub fn with_cursors(self, cursors: Vec<Cursor>) -> Self {
-        Self { cursors, ..self }
+    /// Writes the manifest to the file at `path` in TOML format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if we are unable to write to the file at `path` (e.g., insufficient
+    /// permissions).
+    #[expect(clippy::missing_panics_doc, reason = "lib's invariant")]
+    pub fn save<P>(self, path: P) -> io::Result<()>
+    where
+        P: AsRef<Path>,
+    {
+        let value = TomlManifest::from(self);
+        let contents = toml::to_string_pretty(&value).expect("manifest not serializable");
+        fs::write(path.as_ref(), contents)
     }
 
     /// Target name for the cursor theme.
@@ -195,7 +196,7 @@ mod tests {
         let reader = Cursor::new(buffer);
         let error = Manifest::from_reader(reader).unwrap_err();
 
-        assert!(matches!(error, ManifestError::Parse(_)));
+        assert!(matches!(error, ManifestError::Deserialize(_)));
     }
 
     #[test]
@@ -208,7 +209,7 @@ mod tests {
         let reader = Cursor::new(buffer);
         let error = Manifest::from_reader(reader).unwrap_err();
 
-        assert!(matches!(error, ManifestError::Parse(_)));
+        assert!(matches!(error, ManifestError::Deserialize(_)));
     }
 
     #[test]
@@ -239,6 +240,6 @@ mod tests {
         let reader = Cursor::new(buffer);
         let error = Manifest::from_reader(reader).unwrap_err();
 
-        assert!(matches!(error, ManifestError::Parse(_)));
+        assert!(matches!(error, ManifestError::Deserialize(_)));
     }
 }

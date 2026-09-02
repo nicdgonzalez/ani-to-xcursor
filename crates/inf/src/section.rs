@@ -21,7 +21,7 @@ impl Section {
     }
 
     #[must_use]
-    pub fn as_add_registry(&self) -> AddRegistry<'_> {
+    pub fn as_add_registry_section(&self) -> AddRegistry<'_> {
         AddRegistry { inner: self }
     }
 
@@ -65,7 +65,7 @@ pub struct AddRegistry<'a> {
 pub struct AddRegistryEntry<'a> {
     pub registry_root: &'a str,
     pub subkey: &'a str,
-    pub value_entry_name: &'a str,
+    pub entry_name: &'a str,
     pub flags: &'a str,
     pub value: &'a str,
     pub additional: &'a [String],
@@ -90,7 +90,7 @@ impl<'a> TryFrom<&'a [String]> for AddRegistryEntry<'a> {
         Ok(Self {
             registry_root,
             subkey,
-            value_entry_name,
+            entry_name: value_entry_name,
             flags,
             value,
             additional,
