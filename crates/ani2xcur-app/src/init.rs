@@ -5,6 +5,7 @@ use ani2xcur_core::{CURSORS_DEFAULT, Cursor, Manifest, Package, THEME_DEFAULT};
 use inf::util::expand_vars;
 use inf::{AddRegistryEntry, Entry, Inf, Section, Value};
 
+/// Request to initialize a package.
 pub struct InitializePackageRequest {
     /// Path to package's target root directory.
     pub path: PathBuf,
@@ -16,6 +17,7 @@ pub struct InitializePackageRequest {
     pub theme: Option<String>,
 }
 
+/// Errors that can occur while initializing a package.
 #[derive(Debug, thiserror::Error)]
 pub enum InitializePackageError {
     // Failed to check if the package is already initialized (e.g., insufficient permissions).
