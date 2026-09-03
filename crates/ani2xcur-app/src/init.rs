@@ -41,7 +41,7 @@ pub enum InitializePackageError {
     SaveManifest(#[source] io::Error),
 }
 
-/// Initialized a new package at the given [`InitializePackageRequest::path`].
+/// Initializes a new package at the given path.
 ///
 /// A package is considered initialized if it contains a package manifest. This function extracts
 /// information from the existing INF file to create the manifest, or generates a generic manifest
@@ -119,7 +119,7 @@ pub enum ParseInfError {
     InvalidEntry(#[source] inf::InvalidAddRegistryEntry),
 
     /// Failed to expand variable.
-    #[error("failed to expand variables")]
+    #[error("failed to expand variable")]
     ExpandVars(#[source] inf::util::ExpandVarsError),
 }
 
@@ -132,7 +132,7 @@ fn parse_inf(inf: &Inf) -> Result<(Option<String>, Vec<Cursor>), ParseInfError> 
         None
     } else {
         let theme = expand_vars(entry.entry_name, &strings).map_err(ParseInfError::ExpandVars)?;
-        Some(theme)
+        if theme.is_empty() { None } else { Some(theme) }
     };
 
     let cursors = split_value_into_path_bufs(entry.value, &strings)?
@@ -214,11 +214,13 @@ fn split_value_into_path_bufs(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use ani2xcur_core::CursorKind;
 
     use super::*;
 
-    static DEFAULT_INF: &str = r#"
+    #[test]
+    fn manifest_from_inf_parses_ok() {
+        let buffer = r#"
 [Version]
 signature="$CHICAGO$"
 
@@ -268,21 +270,141 @@ dgn2 = "Diagonal2.ani"
 move = "Move.ani"
 alternate = "Alternate.ani"
 link = "Link.ani"
-    "#;
+"#;
 
-    #[test]
-    fn finds_cursor_scheme_entry() {
-        let reader = Cursor::new(DEFAULT_INF);
+        let reader = io::Cursor::new(&buffer);
         let inf = Inf::from_reader(reader).unwrap();
 
-        let entry = get_cursor_scheme_entry(&inf).unwrap();
+        let manifest = manifest_from_inf(&inf).unwrap();
+        assert_eq!(manifest.theme(), "My Cursor V1".to_owned());
+        assert_eq!(manifest.cursors().len(), 15);
 
-        assert_eq!(entry.registry_root, "HKCU");
-        assert_eq!(entry.subkey, r"Control Panel\Cursors\Schemes");
-        assert_eq!(entry.entry_name, "%SCHEME_NAME%");
-        assert_eq!(
-            entry.value,
-            r"%10%\%CUR_DIR%\%pointer%,%10%\%CUR_DIR%\%help%,%10%\%CUR_DIR%\%work%,%10%\%CUR_DIR%\%busy%,%10%\%CUR_DIR%\%cross%,%10%\%CUR_DIR%\%Text%,%10%\%CUR_DIR%\%Hand%,%10%\%CUR_DIR%\%unavailable%,%10%\%CUR_DIR%\%Vert%,%10%\%CUR_DIR%\%Horz%,%10%\%CUR_DIR%\%Dgn1%,%10%\%CUR_DIR%\%Dgn2%,%10%\%CUR_DIR%\%move%,%10%\%CUR_DIR%\%alternate%,%10%\%CUR_DIR%\%link%"
-        );
+        for (index, (kind, path_buf)) in [
+            (CursorKind::Default, PathBuf::from("Pointer.ani")),
+            (CursorKind::Help, PathBuf::from("Help.ani")),
+            (CursorKind::Progress, PathBuf::from("Working.ani")),
+            (CursorKind::Wait, PathBuf::from("Busy.ani")),
+            (CursorKind::Crosshair, PathBuf::from("Crosshair.ani")),
+            (CursorKind::Text, PathBuf::from("Text.ani")),
+            (CursorKind::Hand, PathBuf::from("Hand.ani")),
+            (CursorKind::Unavailable, PathBuf::from("Unavailable.ani")),
+            (CursorKind::NsResize, PathBuf::from("Vertical.ani")),
+            (CursorKind::EwResize, PathBuf::from("Horizontal.ani")),
+            (CursorKind::NwseResize, PathBuf::from("Diagonal1.ani")),
+            (CursorKind::NeswResize, PathBuf::from("Diagonal2.ani")),
+            (CursorKind::Move, PathBuf::from("Move.ani")),
+            (CursorKind::Alternate, PathBuf::from("Alternate.ani")),
+            (CursorKind::Link, PathBuf::from("Link.ani")),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let cursor = manifest.cursors().get(index).unwrap();
+            assert_eq!(cursor.kind(), *kind);
+            assert_eq!(cursor.path(), path_buf.as_path());
+        }
+    }
+
+    #[test]
+    fn scheme_name_expands() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+AddReg = Scheme.Reg
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,
+
+[Scheme.Cur]
+
+[Strings]
+SCHEME_NAME = "My Cursor V1"
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let manifest = manifest_from_inf(&inf).unwrap();
+        assert_eq!(manifest.theme(), "My Cursor V1".to_owned());
+    }
+
+    #[test]
+    fn scheme_name_expands_to_empty_returns_default() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+AddReg = Scheme.Reg
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,
+
+[Strings]
+SCHEME_NAME = ""
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let manifest = manifest_from_inf(&inf).unwrap();
+        assert_eq!(manifest.theme(), THEME_DEFAULT.to_owned());
+    }
+
+    #[test]
+    fn empty_scheme_name_returns_default() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+AddReg = Scheme.Reg
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes",,,
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let manifest = manifest_from_inf(&inf).unwrap();
+        assert_eq!(manifest.theme(), THEME_DEFAULT.to_owned());
+    }
+
+    #[test]
+    fn missing_default_install_returns_error() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let error = manifest_from_inf(&inf).unwrap_err();
+
+        assert!(matches!(
+            error,
+            InitializePackageError::ParseInf(ParseInfError::DefaultInstallNotFound)
+        ));
+    }
+
+    #[test]
+    fn missing_addreg_entry_returns_error() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let error = parse_inf(&inf).unwrap_err();
+
+        assert!(matches!(error, ParseInfError::AddRegDirectiveNotFound));
     }
 }
