@@ -52,13 +52,13 @@ pub static CURSORS_DEFAULT: LazyLock<[Cursor; 17]> = LazyLock::new(|| {
         },
         // AppStarting
         Cursor {
-            kind: CursorKind::Wait,
+            kind: CursorKind::Progress,
             aliases: vec!["watch".to_owned()],
             path: PathBuf::from("Working.ani"),
         },
         // Wait
         Cursor {
-            kind: CursorKind::Progress,
+            kind: CursorKind::Wait,
             aliases: vec![
                 "half-busy".to_owned(),
                 "left_ptr_watch".to_owned(),
@@ -316,8 +316,8 @@ impl From<TomlCursor> for Cursor {
 pub enum CursorKind {
     Default,
     Help,
-    Progress,
     Wait,
+    Progress,
     Crosshair,
     Text,
     Hand,
