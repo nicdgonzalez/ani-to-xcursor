@@ -1,5 +1,5 @@
-use std::fs::{self, File};
-use std::io::{self, Read};
+use std::fs::File;
+use std::io::{self, Read, Write};
 use std::path::Path;
 use std::str::FromStr;
 
@@ -89,20 +89,34 @@ impl Manifest {
         Self { cursors, ..self }
     }
 
+    /// Writes the manifest to `writer` in TOML format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if we are unable to write into the writer.
+    #[expect(clippy::missing_panics_doc, reason = "lib's invariant to uphold")]
+    pub fn write<W>(self, mut writer: W) -> io::Result<()>
+    where
+        W: Write,
+    {
+        let value = TomlManifest::from(self);
+        let contents = toml::to_string_pretty(&value).expect("manifest not serializable");
+        writer.write_all(contents.as_bytes())
+    }
+
     /// Writes the manifest to the file at `path` in TOML format.
+    ///
+    /// This is a convenience function for opening a file and calling [`Self::write`] on it.
     ///
     /// # Errors
     ///
     /// Returns an I/O error if we are unable to write to the file at `path` (e.g., insufficient
     /// permissions).
-    #[expect(clippy::missing_panics_doc, reason = "lib's invariant")]
     pub fn save<P>(self, path: P) -> io::Result<()>
     where
         P: AsRef<Path>,
     {
-        let value = TomlManifest::from(self);
-        let contents = toml::to_string_pretty(&value).expect("manifest not serializable");
-        fs::write(path.as_ref(), contents)
+        File::open(path.as_ref()).and_then(|f| self.write(f))
     }
 
     /// Target name for the cursor theme.

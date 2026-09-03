@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::{io, slice};
 
-use ani2xcur_core::{CURSORS_DEFAULT, Cursor, Manifest, Package, Size, THEME_DEFAULT};
+use ani2xcur_core::{CURSORS_DEFAULT, Cursor, Manifest, Package, THEME_DEFAULT};
 use inf::util::expand_vars;
 use inf::{AddRegistryEntry, Entry, Inf, Section, Value};
 
@@ -14,8 +14,6 @@ pub struct InitializePackageRequest {
     pub inf: Option<PathBuf>,
     /// Theme name that overrides what may be in the INF file.
     pub theme: Option<String>,
-    /// Target cursor sizes to generate.
-    pub sizes: Vec<Size>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -35,6 +33,10 @@ pub enum InitializePackageError {
     /// Failed to extract cursor information from the INF file.
     #[error("failed to parse INF file")]
     ParseInf(#[source] ParseInfError),
+
+    /// Failed to create file handle to write manifest into.
+    #[error("failed to create file handle to write manifest into")]
+    CreateManifestFile(#[source] io::Error),
 
     /// Failed to save manifest file.
     #[error("failed to save manifest file")]
@@ -68,22 +70,35 @@ pub fn initialize_package(request: InitializePackageRequest) -> Result<(), Initi
         return Err(InitializePackageError::AlreadyInitialized);
     }
 
-    let mut manifest = if let Some(path) = request.inf {
-        let inf = Inf::open(path).map_err(InitializePackageError::OpenInf)?;
-        manifest_from_inf(&inf)?
-    } else {
-        Manifest::default()
-    };
+    let inf = request
+        .inf
+        .map(Inf::open)
+        .transpose()
+        .map_err(InitializePackageError::OpenInf)?;
 
-    if let Some(theme) = request.theme {
-        manifest = manifest.with_theme(theme);
-    }
+    let manifest = create_manifest(inf.as_ref(), request.theme)?;
 
     manifest
         .save(package.manifest_path())
         .map_err(InitializePackageError::SaveManifest)?;
 
     Ok(())
+}
+
+fn create_manifest(
+    inf: Option<&Inf>,
+    theme: Option<String>,
+) -> Result<Manifest, InitializePackageError> {
+    let mut manifest = match inf {
+        Some(inf) => manifest_from_inf(inf)?,
+        None => Manifest::default(),
+    };
+
+    if let Some(theme) = theme {
+        manifest = manifest.with_theme(theme);
+    }
+
+    Ok(manifest)
 }
 
 fn manifest_from_inf(inf: &Inf) -> Result<Manifest, InitializePackageError> {
@@ -133,10 +148,8 @@ fn parse_inf(inf: &Inf) -> Result<(Option<String>, Vec<Cursor>), ParseInfError> 
 
     let cursors = split_value_into_path_bufs(entry.value, &strings)?
         .into_iter()
-        .enumerate()
-        .filter_map(|(i, path)| {
-            (!path.is_empty()).then(|| CURSORS_DEFAULT[i].clone().with_path(path))
-        })
+        .zip(CURSORS_DEFAULT.iter())
+        .filter_map(|(path, cursor)| (!path.is_empty()).then(|| cursor.clone().with_path(path)))
         .collect::<Vec<Cursor>>();
 
     Ok((theme, cursors))
@@ -216,9 +229,7 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn manifest_from_inf_parses_ok() {
-        let buffer = r#"
+    static INF_DEFAULT: &str = r#"
 [Version]
 signature="$CHICAGO$"
 
@@ -269,14 +280,16 @@ alternate = "Alternate.ani"
 link = "Link.ani"
 "#;
 
-        let reader = io::Cursor::new(&buffer);
+    #[test]
+    fn manifest_from_inf_parses_ok() {
+        let reader = io::Cursor::new(INF_DEFAULT);
         let inf = Inf::from_reader(reader).unwrap();
 
         let manifest = manifest_from_inf(&inf).unwrap();
         assert_eq!(manifest.theme(), "My Cursor V1".to_owned());
         assert_eq!(manifest.cursors().len(), 15);
 
-        for (index, (kind, path_buf)) in [
+        for (cursor, (kind, path_buf)) in manifest.cursors().iter().zip([
             (CursorKind::Default, PathBuf::from("Pointer.ani")),
             (CursorKind::Help, PathBuf::from("Help.ani")),
             (CursorKind::Progress, PathBuf::from("Working.ani")),
@@ -292,12 +305,8 @@ link = "Link.ani"
             (CursorKind::Move, PathBuf::from("Move.ani")),
             (CursorKind::Alternate, PathBuf::from("Alternate.ani")),
             (CursorKind::Link, PathBuf::from("Link.ani")),
-        ]
-        .iter()
-        .enumerate()
-        {
-            let cursor = manifest.cursors().get(index).unwrap();
-            assert_eq!(cursor.kind(), *kind);
+        ]) {
+            assert_eq!(cursor.kind(), kind);
             assert_eq!(cursor.path(), path_buf.as_path());
         }
     }
@@ -547,15 +556,11 @@ work = "Working.ani"
 
         assert_eq!(theme, Some("My Cursor V1".to_owned()));
 
-        for (i, path_buf) in [
+        for (cursor, path_buf) in cursors.iter().zip([
             PathBuf::from("Pointer.ani"),
             PathBuf::from("Help.ani"),
             PathBuf::from("Working.ani"),
-        ]
-        .iter()
-        .enumerate()
-        {
-            let cursor = cursors.get(i).unwrap();
+        ]) {
             assert_eq!(cursor.path(), path_buf.as_path());
         }
     }
@@ -586,26 +591,134 @@ SCHEME_NAME = "My Cursor V1"
     }
 
     #[test]
-    fn more_cursors_than_cursors_default_returns_() {
-        todo!()
+    fn extra_cursors_get_truncated() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+CopyFiles = Scheme.Cur
+AddReg = Scheme.Reg
+
+[DestinationDirs]
+Scheme.Cur = 10,"%CUR_DIR%"
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,"%10%\%CUR_DIR%\%pointer%,%10%\%CUR_DIR%\%help%,%10%\%CUR_DIR%\%work%,%10%\%CUR_DIR%\%busy%,%10%\%CUR_DIR%\%cross%,%10%\%CUR_DIR%\%Text%,%10%\%CUR_DIR%\%Hand%,%10%\%CUR_DIR%\%unavailable%,%10%\%CUR_DIR%\%Vert%,%10%\%CUR_DIR%\%Horz%,%10%\%CUR_DIR%\%Dgn1%,%10%\%CUR_DIR%\%Dgn2%,%10%\%CUR_DIR%\%move%,%10%\%CUR_DIR%\%alternate%,%10%\%CUR_DIR%\%link%,%10%\%CUR_DIR%\Location.ani,%10%\%CUR_DIR%\Person.ani,%10%\%CUR_DIR%\Extra1.ani,%10%\%CUR_DIR%\Extra2.ani"
+
+[Scheme.Cur]
+"Pointer.ani"
+"Help.ani"
+"Working.ani"
+"Busy.ani"
+"Crosshair.ani"
+"Text.ani"
+"Hand.ani"
+"Unavailable.ani"
+"Vertical.ani"
+"Horizontal.ani"
+"Diagonal1.ani"
+"Diagonal2.ani"
+"Move.ani"
+"Alternate.ani"
+"Link.ani"
+
+[Strings]
+CUR_DIR = "Cursors\My Cursor V1"
+SCHEME_NAME = "My Cursor V1"
+pointer = "Pointer.ani"
+help = "Help.ani"
+work = "Working.ani"
+busy = "Busy.ani"
+cross = "Crosshair.ani"
+text = "Text.ani"
+hand = "Hand.ani"
+unavailable = "Unavailable.ani"
+vert = "Vertical.ani"
+horz = "Horizontal.ani"
+dgn1 = "Diagonal1.ani"
+dgn2 = "Diagonal2.ani"
+move = "Move.ani"
+alternate = "Alternate.ani"
+link = "Link.ani"
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let (_, cursors) = parse_inf(&inf).unwrap();
+
+        // Length should be clamped to however many cursor kinds + aliases we have defined.
+        assert_eq!(cursors.len(), CURSORS_DEFAULT.len());
     }
 
     #[test]
     fn empty_cursor_path_skips_that_cursor() {
-        todo!()
-    }
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
 
-    // TODO: These test the operation itself... Integration tests? This operation is already
-    // extracted from the CLI itself... would be strange to extract it once more... Perhaps extract
-    // once more using generics instead of writing to files directly?
+[DefaultInstall]
+CopyFiles = Scheme.Cur
+AddReg = Scheme.Reg
+
+[DestinationDirs]
+Scheme.Cur = 10,"%CUR_DIR%"
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,"%10%\%CUR_DIR%\%pointer%,,%10%\%CUR_DIR%\%work%"
+
+[Scheme.Cur]
+"Pointer.ani"
+"Working.ani"
+
+[Strings]
+CUR_DIR = "Cursors\My Cursor V1"
+SCHEME_NAME = "My Cursor V1"
+pointer = "Pointer.ani"
+work = "Working.ani"
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let (_, cursors) = parse_inf(&inf).unwrap();
+
+        for (cursor, expected) in cursors
+            .iter()
+            .zip([PathBuf::from("Pointer.ani"), PathBuf::from("Working.ani")])
+        {
+            assert_eq!(cursor.path(), expected.as_path());
+        }
+    }
 
     #[test]
     fn explicit_theme_overrides_inf() {
-        todo!()
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+AddReg = Scheme.Reg
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,
+
+[Strings]
+SCHEME_NAME = "My Cursor V1"
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let manifest = create_manifest(Some(&inf), Some("Our Cursor V1".to_owned())).unwrap();
+
+        assert_eq!(manifest.theme(), "Our Cursor V1");
     }
 
     #[test]
     fn skip_inf_generates_default_manifest() {
-        todo!()
+        let manifest = create_manifest(None, None).unwrap();
+        assert_eq!(manifest.theme(), THEME_DEFAULT);
     }
 }
