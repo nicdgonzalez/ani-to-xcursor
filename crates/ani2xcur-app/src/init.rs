@@ -108,10 +108,6 @@ pub enum ParseInfError {
     #[error("entry modifying the cursor schemes registry not found")]
     CursorSchemesEntryNotFound,
 
-    /// Section not found.
-    #[error("section not found: {name}")]
-    SectionNotFound { name: String },
-
     /// Entry does not follow the `AddReg` section format.
     ///
     /// <https://learn.microsoft.com/en-us/windows-hardware/drivers/install/inf-addreg-directive>
@@ -138,7 +134,9 @@ fn parse_inf(inf: &Inf) -> Result<(Option<String>, Vec<Cursor>), ParseInfError> 
     let cursors = split_value_into_path_bufs(entry.value, &strings)?
         .into_iter()
         .enumerate()
-        .map(|(i, path)| CURSORS_DEFAULT[i].clone().with_path(path))
+        .filter_map(|(i, path)| {
+            (!path.is_empty()).then(|| CURSORS_DEFAULT[i].clone().with_path(path))
+        })
         .collect::<Vec<Cursor>>();
 
     Ok((theme, cursors))
@@ -160,11 +158,11 @@ fn get_cursor_scheme_entry(inf: &Inf) -> Result<AddRegistryEntry<'_>, ParseInfEr
         .ok_or(ParseInfError::AddRegDirectiveNotFound)?;
 
     for section_name in section_names {
-        let section = inf
-            .get(section_name)
-            .ok_or_else(|| ParseInfError::SectionNotFound {
-                name: section_name.to_owned(),
-            })?;
+        let Some(section) = inf.get(section_name) else {
+            // No need to validate the INF file; if `AddReg` named a section that does not exist,
+            // we can just skip it.
+            continue;
+        };
 
         for entry in section.as_add_registry_section().entries() {
             let entry = entry.map_err(ParseInfError::InvalidEntry)?;
@@ -225,12 +223,11 @@ mod tests {
 signature="$CHICAGO$"
 
 [DefaultInstall]
-CopyFiles = Scheme.Cur, Scheme.Txt
+CopyFiles = Scheme.Cur
 AddReg = Scheme.Reg
 
 [DestinationDirs]
 Scheme.Cur = 10,"%CUR_DIR%"
-Scheme.Txt = 10,"%CUR_DIR%"
 
 [Scheme.Reg]
 HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,"%10%\%CUR_DIR%\%pointer%,%10%\%CUR_DIR%\%help%,%10%\%CUR_DIR%\%work%,%10%\%CUR_DIR%\%busy%,%10%\%CUR_DIR%\%cross%,%10%\%CUR_DIR%\%Text%,%10%\%CUR_DIR%\%Hand%,%10%\%CUR_DIR%\%unavailable%,%10%\%CUR_DIR%\%Vert%,%10%\%CUR_DIR%\%Horz%,%10%\%CUR_DIR%\%Dgn1%,%10%\%CUR_DIR%\%Dgn2%,%10%\%CUR_DIR%\%move%,%10%\%CUR_DIR%\%alternate%,%10%\%CUR_DIR%\%link%"
@@ -317,8 +314,6 @@ AddReg = Scheme.Reg
 [Scheme.Reg]
 HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,
 
-[Scheme.Cur]
-
 [Strings]
 SCHEME_NAME = "My Cursor V1"
 "#;
@@ -383,16 +378,13 @@ signature="$CHICAGO$"
         let reader = io::Cursor::new(&buffer);
         let inf = Inf::from_reader(reader).unwrap();
 
-        let error = manifest_from_inf(&inf).unwrap_err();
+        let error = parse_inf(&inf).unwrap_err();
 
-        assert!(matches!(
-            error,
-            InitializePackageError::ParseInf(ParseInfError::DefaultInstallNotFound)
-        ));
+        assert!(matches!(error, ParseInfError::DefaultInstallNotFound));
     }
 
     #[test]
-    fn missing_addreg_entry_returns_error() {
+    fn missing_addreg_directive_returns_error() {
         let buffer = r#"
 [Version]
 signature="$CHICAGO$"
@@ -406,5 +398,214 @@ signature="$CHICAGO$"
         let error = parse_inf(&inf).unwrap_err();
 
         assert!(matches!(error, ParseInfError::AddRegDirectiveNotFound));
+    }
+
+    #[test]
+    fn missing_addreg_section_is_skipped() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+AddReg = Scheme.DoesNotExist, Scheme.Reg
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,
+
+[Strings]
+SCHEME_NAME = "My Cursor V1"
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let (theme, cursors) = parse_inf(&inf).unwrap();
+
+        assert_eq!(theme, Some("My Cursor V1".to_owned()));
+        assert_eq!(cursors, vec![]);
+    }
+
+    #[test]
+    fn no_cursor_scheme_entry_returns_error() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+AddReg = Scheme.Reg
+
+[Scheme.Reg]
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let error = parse_inf(&inf).unwrap_err();
+
+        assert!(matches!(error, ParseInfError::CursorSchemesEntryNotFound));
+    }
+
+    #[test]
+    fn invalid_cursor_scheme_entry_returns_error() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+AddReg = Scheme.Reg
+
+[Scheme.Reg]
+; NOTE: The `flags` value is missing. Flags is usually empty, so I can foresee someone
+; accidentally forgetting to add that extra comma.
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%","%10%\%CUR_DIR%\%pointer%"
+
+[Strings]
+CUR_DIR = "Cursors\My Cursor V1"
+SCHEME_NAME = "My Cursor V1"
+pointer = "Pointer.ani"
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let error = parse_inf(&inf).unwrap_err();
+
+        assert!(matches!(error, ParseInfError::InvalidEntry(_)));
+    }
+
+    #[test]
+    fn missing_var_in_strings_returns_error() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+AddReg = Scheme.Reg
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes",,,"%10%\%CUR_DIR%\%pointer%"
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let error = parse_inf(&inf).unwrap_err();
+
+        assert!(matches!(error, ParseInfError::ExpandVars(_)));
+    }
+
+    #[test]
+    fn unrelated_addreg_entries_are_skipped() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+AddReg = Scheme.Reg
+
+[Scheme.Reg]
+HKCU,"Control Panel\Something\Else",,,
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,
+
+[Strings]
+SCHEME_NAME = "My Cursor V1"
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let (theme, cursors) = parse_inf(&inf).unwrap();
+
+        assert_eq!(theme, Some("My Cursor V1".to_owned()));
+        assert_eq!(cursors, vec![]);
+    }
+
+    #[test]
+    fn cursor_paths_split_properly() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+AddReg = Scheme.Reg
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,"%10%\%CUR_DIR%\%pointer%,%10%\%CUR_DIR%\%help%,%10%\%CUR_DIR%\%work%"
+
+[Strings]
+CUR_DIR = "Cursors\My Cursor V1"
+SCHEME_NAME = "My Cursor V1"
+pointer = "Pointer.ani"
+help = "Help.ani"
+work = "Working.ani"
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let (theme, cursors) = parse_inf(&inf).unwrap();
+
+        assert_eq!(theme, Some("My Cursor V1".to_owned()));
+
+        for (i, path_buf) in [
+            PathBuf::from("Pointer.ani"),
+            PathBuf::from("Help.ani"),
+            PathBuf::from("Working.ani"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let cursor = cursors.get(i).unwrap();
+            assert_eq!(cursor.path(), path_buf.as_path());
+        }
+    }
+
+    #[test]
+    fn missing_var_in_cursor_path_returns_error() {
+        let buffer = r#"
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+AddReg = Scheme.Reg
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,"%10%\%CUR_DIR%\%DOES_NOT_EXIST%"
+
+[Strings]
+CUR_DIR = "Cursors\My Cursor V1"
+SCHEME_NAME = "My Cursor V1"
+"#;
+
+        let reader = io::Cursor::new(&buffer);
+        let inf = Inf::from_reader(reader).unwrap();
+
+        let error = parse_inf(&inf).unwrap_err();
+
+        assert!(matches!(error, ParseInfError::ExpandVars(_)));
+    }
+
+    #[test]
+    fn more_cursors_than_cursors_default_returns_() {
+        todo!()
+    }
+
+    #[test]
+    fn empty_cursor_path_skips_that_cursor() {
+        todo!()
+    }
+
+    // TODO: These test the operation itself... Integration tests? This operation is already
+    // extracted from the CLI itself... would be strange to extract it once more... Perhaps extract
+    // once more using generics instead of writing to files directly?
+
+    #[test]
+    fn explicit_theme_overrides_inf() {
+        todo!()
+    }
+
+    #[test]
+    fn skip_inf_generates_default_manifest() {
+        todo!()
     }
 }
