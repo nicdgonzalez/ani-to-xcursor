@@ -22,6 +22,7 @@ name = "ani2xcur"
 version = "0.1.6"
 dependencies = [
  "ani",
+ "ani2xcur-app",
  "ani2xcur-core",
  "anyhow",
  "bytesize",

@@ -104,7 +104,6 @@ fn create_manifest(
 fn manifest_from_inf(inf: &Inf) -> Result<Manifest, InitializePackageError> {
     let (scheme_name, cursors) = parse_inf(inf).map_err(InitializePackageError::ParseInf)?;
     let theme = scheme_name.unwrap_or_else(|| THEME_DEFAULT.to_owned());
-
     Ok(Manifest::new(theme, cursors))
 }
 

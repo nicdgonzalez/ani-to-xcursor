@@ -6,7 +6,7 @@ use anyhow::Context as _;
 use colored::Colorize as _;
 
 use crate::commands::prelude::*;
-use crate::ops::init::{InitializeRequest, initialize_package};
+use ani2xcur_app::init::{InitializePackageRequest, initialize_package};
 
 #[derive(Debug, Default, clap::Args)]
 pub struct Init {
@@ -29,11 +29,11 @@ pub struct Init {
 
 impl Run for Init {
     fn run(self, ctx: Context) -> anyhow::Result<()> {
-        let request = InitializeRequest {
+        let request = InitializePackageRequest {
             path: ctx.current_dir,
             overwrite: self.overwrite,
-            skip_inf: self.skip_inf,
-            inf: self.inf,
+            inf: (!self.skip_inf)
+                .then_some(self.inf.unwrap_or_else(|| PathBuf::from("Install.inf"))),
             theme: self.theme,
         };
 

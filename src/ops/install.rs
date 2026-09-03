@@ -8,7 +8,7 @@ use ani2xcur_core::package::Package;
 use anyhow::Context as _;
 
 use crate::ops::build::{BuildPackageRequest, build_package};
-use crate::ops::init::{InitializeRequest, initialize_package};
+use ani2xcur_app::init::{InitializePackageError, InitializePackageRequest, initialize_package};
 
 /// Request to install a package.
 pub struct InstallPackageRequest {
@@ -26,7 +26,7 @@ pub enum InstallPackageError {
     NotInitialized,
 
     #[error("failed to intitialize package")]
-    InitFailed(#[source] anyhow::Error),
+    InitFailed(#[source] InitializePackageError),
 
     #[error("failed to check if theme already exists")]
     CheckThemeExists(#[source] io::Error),
@@ -60,10 +60,9 @@ pub fn install_package(request: InstallPackageRequest) -> Result<String, Install
 
     if !is_initialized {
         if request.default_init {
-            let request = InitializeRequest {
+            let request = InitializePackageRequest {
                 path: package.path().to_owned(),
                 overwrite: false,
-                skip_inf: true,
                 inf: None,
                 theme: None,
             };
