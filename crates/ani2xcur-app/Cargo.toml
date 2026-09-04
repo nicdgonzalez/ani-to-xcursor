@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ani = { version = "0.1.0", path = "../ani" }
 ani2xcur-core = { version = "0.1.0", path = "../ani2xcur-core" }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 inf = { version = "0.1.0", path = "../inf" }
 thiserror = "2.0.20"
+tracing = "0.1.44"
+xcur = { version = "0.1.0", path = "../xcur" }

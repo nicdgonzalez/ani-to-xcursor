@@ -23,7 +23,7 @@ use std::path::Path;
 
 use crate::comment::COMMENT_HEADER_SIZE;
 pub use crate::comment::{Comment, CommentKind};
-use crate::error::ParseError;
+pub use crate::error::ParseError;
 use crate::image::IMAGE_HEADER_SIZE;
 pub use crate::image::Image;
 use crate::parser::Parser;

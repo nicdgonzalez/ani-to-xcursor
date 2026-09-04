@@ -45,9 +45,13 @@ dependencies = [
 name = "ani2xcur-app"
 version = "0.1.0"
 dependencies = [
+ "ani",
  "ani2xcur-core",
+ "image",
  "inf",
  "thiserror",
+ "tracing",
+ "xcur",
 ]
 
 [[package]]
